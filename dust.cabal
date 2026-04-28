@@ -53,21 +53,35 @@ extra-doc-files: CHANGELOG.md
 -- extra-source-files:
 
 common warnings
-  ghc-options: -Wall -Wno-name-shadowing -Wno-unused-do-bind
+  ghc-options:
+    -Wall -Wno-name-shadowing -Wno-unused-do-bind -ddump-splices
 
 common dependencies
   build-depends:
     , aeson
-    , base        ^>=4.21.0.0
+    , base              ^>=4.21.0.0
     , bitmasks
     , bytestring
     , free
+    , lens
+    , mtl
     , random
+    , template-haskell
+    , text
+    , time
+
+common extensions
+  default-extensions:
+    DuplicateRecordFields
+    OverloadedRecordDot
+    TemplateHaskell
+    TypeFamilies
 
 executable dust
   -- Import common warning flags.
   import:           warnings
   import:           dependencies
+  import:           extensions
 
   -- .hs or .lhs file containing the Main module.
   main-is:          Main.hs
@@ -76,7 +90,9 @@ executable dust
     DustUp.Action
     DustUp.Artifact
     DustUp.Dice
+    DustUp.Engine
     DustUp.LiteralWords
+    DustUp.Types
 
   -- Directories containing source files.
   hs-source-dirs:   src
@@ -87,6 +103,7 @@ executable dust
 executable dustify
   import:           warnings
   import:           dependencies
+  import:           extensions
   main-is:          Dustify.hs
   hs-source-dirs:   src
   default-language: GHC2024
