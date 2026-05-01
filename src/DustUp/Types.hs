@@ -5,6 +5,7 @@ import Control.Monad.Free.TH
 import Data.Bitmask
 import Data.Text
 import DustUp.LiteralWords
+import GHC.Generics (Generic)
 import System.Random
 
 type Game'ID = Int
@@ -29,7 +30,7 @@ data Dice
   | Four
   | Five
   | Six
-  deriving Eq
+  deriving (Eq, Generic)
 
 repr :: Dice -> Integer
 repr = \case
@@ -138,8 +139,6 @@ data instance Game'Object Artifact = Artifact
   , artifact :: Artifact
   }
 
-{- FOURMOLU_DISABLE -}
-
 -- the arguments passed to Movement should be GameObject wraps
 -- rather than pure player type, dice type, etc.
 data Movement
@@ -162,6 +161,7 @@ data Movement'Options'
   deriving (Enum, Show, Eq, Bounded)
 
 type Movement'Options = Bitmask8 Movement'Options'
+
 -- usage:
 -- s = option'pass .|. option'reroll
 
@@ -174,7 +174,7 @@ data ActionD andThen
   | Set'the'counter'on ArtifactO To Int From Movement andThen
   | Turn ArtifactO To Side From Movement andThen
   | Roll Int ([DiceO] -> andThen)
-  | Put (Those DiceO) Onto (Either ArtifactO AreaO) From Movement andThen
+  | Put_ (Those DiceO) Onto (Either ArtifactO AreaO) From Movement andThen
   | Flip DiceO To Dice From Movement andThen
   | Remove (Those DiceO) From (Either ArtifactO AreaO) From Movement andThen
   | Create'Modifier Modifier From Movement andThen
@@ -184,8 +184,6 @@ data ActionD andThen
   | -- feedback
     Request'movement String From PlayerO Movement'Options (Movement -> andThen)
   deriving Functor
-
-{- FOURMOLU_ENABLE -}
 
 -- $(make'action'types ''ActionD)
 data Action'Types
@@ -208,15 +206,13 @@ typeof'action (Set'the'counter'on{}) =
   Action'Set'the'counter'on
 typeof'action (Turn{}) = Action'Turn
 typeof'action (Roll _ _) = Action'Roll
-typeof'action (Put{}) = Action'Put
+typeof'action (Put_{}) = Action'Put
 typeof'action (Flip{}) = Action'Flip
 typeof'action (Remove{}) = Action'Remove
 typeof'action (Create'Modifier{}) = Action'Create'Modifier
 typeof'action (Get'self _) = Action'Get'self
 typeof'action (Get'all'players _) = Action'Get'all'players
-typeof'action (Request'movement{}) =
-  Action'Request'movement
-{- FOURMOLU_DISABLE -}
+typeof'action (Request'movement{}) = Action'Request'movement
 
 type ActionM = Free ActionD
 
@@ -232,8 +228,6 @@ data Transformation
   | Put' DiceO Onto (Either ArtifactO AreaO)
   | Remove' DiceO From (Either ArtifactO AreaO)
   | Time'Advance
-
-{- FOURMOLU_ENABLE -}
 
 data Phase
   = UPKEEP
