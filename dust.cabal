@@ -86,10 +86,6 @@ executable dust
   -- .hs or .lhs file containing the Main module.
   main-is:          Main.hs
   other-modules:
-    DustUp.Ability
-    DustUp.Action
-    DustUp.Artifact
-    DustUp.Dice
     DustUp.Engine
     DustUp.LiteralWords
     DustUp.Types
