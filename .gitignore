@@ -3,3 +3,4 @@ dist/
 dist-newstyle/
 release/
 .DS_store/
+node_modules/
