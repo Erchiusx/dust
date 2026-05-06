@@ -89,6 +89,7 @@ executable dust
     DustUp.Engine
     DustUp.LiteralWords
     DustUp.Types
+    DustUp.Artifact.Column2
 
   -- Directories containing source files.
   hs-source-dirs:   src

@@ -9,3 +9,14 @@
 2. 客户端选择后将 Action 和当前客户端 GameState 一并传送给服务端
 3. 服务端校验 GameState，失败则向客户端同步正确 GameState 并重新询问，客户端刷新并重新建立连接
 4. 校验成功，则服务用 GameState 和 Action 计算 [GameState', Logs] 并向所有客户端写入更新要求，然后回到步骤1
+
+结算层级
+
+> player input --- movement
+>               | transpile
+>              --- action, as monad `ActionM ()`
+>               | resolve
+>              --- transformation, as list `[Transformation]`
+>               | state check
+> output       --- game state change
+
