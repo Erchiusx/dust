@@ -1,10 +1,12 @@
 module DustUp.Engine where
 
-import Control.Monad (guard, replicateM)
+import Control.Monad (forM, guard, replicateM)
 import Control.Monad.Free
 import Control.Monad.RWS
 import Data.Function ((&))
 import Data.IORef
+import Data.List (find)
+import Data.Maybe (fromMaybe)
 import DustUp.LiteralWords
 import DustUp.Types
 import GHC.IO (unsafePerformIO)
@@ -116,11 +118,13 @@ runEngine
 runEngine old m = do
   Just runtime <- read'Runtime
   let (new, Engine'State{runtime = runtime', queue}, l) = runRWS m old $ Engine'State runtime (Pure ())
-  write'Runtime $ runtime' `apply'transformations` l
-  case queue of
+  let (transformed, triggered) = runtime' `apply'transformations` l
+  write'Runtime transformed
+  let next = queue >> triggered
+  case next of
     Pure () ->
       return new
-    _ -> runEngine new (resolve queue)
+    _ -> runEngine new (resolve next)
 
 assign'object :: EngineM Int
 assign'object = do
@@ -143,7 +147,7 @@ assign'object = do
 
 -- TODO:
 apply'transformations
-  :: Runtime -> [Event] -> Runtime
+  :: Runtime -> [Event] -> (Runtime, ActionM ())
 apply'transformations = undefined
 
 --------------------------------------------------------------------------------
@@ -179,8 +183,8 @@ apply'modifiers raw action = do
     foldl'
       (&)
       raw
-      [ modifier state action
-      | Modifier modifier <- modifiers
+      [ applyModifier modifier state action
+      | Modifier{modifier} <- modifiers
       ]
 
 interpret
@@ -247,30 +251,70 @@ interpret action = case action of
               }
         }
     resolve (continuation dices)
-  Put_ dices Onto (Left artifact) From movement continuation -> do
-    -- TODO: keep inplementing action resolvement
-    undefined
-
-emit
-  :: ActionD a
-  -> Transformation
-  -> EngineM ()
-emit = undefined
-
--- emit action transformation = do
---   rt <- get
-
---   let st =
---         runtime'state rt
-
---       transformation' =
---         apply'Modifiers st action transformation
-
---       rt' =
---         maintain'Runtime rt [transformation']
-
---   tell [transformation']
---   Control.Monad.State.Strict.put rt'
+  Put_ dices Onto target From movement continuation -> do
+    events <-
+      forM
+        dices
+        ( \dice -> do
+            eventtrans <- apply'modifiers (Put' dice Onto target) action
+            return $
+              Event
+                { transformation = eventtrans
+                , during = action
+                }
+        )
+    tell events
+    resolve continuation
+  Flip object To dice From movement continuation -> do
+    let raw = Set' object To dice
+    modified <- apply'modifiers raw action
+    tell
+      [ Event
+          { transformation = modified
+          , during = action
+          }
+      ]
+    resolve continuation
+  Remove dices From target From movement continuation -> do
+    events <-
+      forM
+        dices
+        ( \dice -> do
+            eventtrans <- apply'modifiers (Remove' dice From target) action
+            return $
+              Event
+                { transformation = eventtrans
+                , during = action
+                }
+        )
+    tell events
+    resolve continuation
+  Create'Modifier modifier From movement continuation -> do
+    oid <- assign'object
+    let
+      object = Modifier oid modifier
+      raw = Create' object
+    modified <- apply'modifiers raw action
+    tell
+      [ Event
+          { transformation = modified
+          , during = action
+          }
+      ]
+    resolve (continuation object)
+  Get'active'player continuation -> do
+    Engine'State{runtime} <- get
+    let Runtime{active'player, runtime'state = game} = runtime
+    let active'player' =
+          fromMaybe (head game.players) $
+            find (\Player{oid} -> oid == active'player) game.players
+    resolve (continuation active'player')
+  Get'all'players continuation -> do
+    Engine'State{runtime} <- get
+    let Runtime{runtime'state = Game'State{players}} = runtime
+    resolve (continuation players)
+  Request'movement prompt From player options continuation -> do
+    return $ Engine'Paused $ Pending'Movement prompt player options continuation
 --------------------------------------------------------------------------------
 -- Modifier / Condition
 --------------------------------------------------------------------------------

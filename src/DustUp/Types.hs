@@ -91,8 +91,12 @@ data Artifact
       }
 
 data Ability
-  = Condition `Triggered` Movement
-  | Activated Movement Bool
+  = Condition `Triggered` (ActionM ())
+  | Activated
+    {
+      movement :: ActionM ()
+      , isSP :: Bool
+    }
   | Static Modifier
 
 newtype Condition
@@ -106,7 +110,7 @@ newtype Condition
   }
 
 newtype Modifier
-  = Modifier
+  = Modifier_
   { applyModifier
       :: forall a
        . Game'State
@@ -121,22 +125,28 @@ type PlayerO = Game'Object Player
 type DiceO = Game'Object Dice
 type ArtifactO = Game'Object Artifact
 type AreaO = Game'Object Area
+type ModifierO = Game'Object Modifier
 
 data instance Game'Object Player = Player
-  { oid :: Int
+  { oid :: Game'ID
   , life :: Int
   , artifacts :: (ArtifactO, ArtifactO, ArtifactO)
   , areas :: (AreaO, AreaO, AreaO)
   }
 
 data instance Game'Object Dice = Dice
-  { oid :: Int
+  { oid :: Game'ID
   , dice :: Dice
   }
 
 data instance Game'Object Artifact = Artifact
-  { oid :: Int
+  { oid :: Game'ID
   , artifact :: Artifact
+  }
+
+data instance Game'Object Modifier = Modifier
+  { oid :: Game'ID
+  , modifier :: Modifier
   }
 
 -- the arguments passed to Movement should be GameObject wraps
@@ -177,9 +187,9 @@ data ActionD andThen
   | Put_ (Those DiceO) Onto (Either ArtifactO AreaO) From Movement andThen
   | Flip DiceO To Dice From Movement andThen
   | Remove (Those DiceO) From (Either ArtifactO AreaO) From Movement andThen
-  | Create'Modifier Modifier From Movement andThen
+  | Create'Modifier Modifier From Movement (ModifierO -> andThen)
   | -- monadic readers
-    Get'self (PlayerO -> andThen)
+    Get'active'player (PlayerO -> andThen)
   | Get'all'players ([PlayerO] -> andThen)
   | -- feedback
     Request'movement String From PlayerO Movement'Options (Movement -> andThen)
@@ -196,7 +206,7 @@ data Action'Types
   | Action'Flip
   | Action'Remove
   | Action'Create'Modifier
-  | Action'Get'self
+  | Action'Get'active'player
   | Action'Get'all'players
   | Action'Request'movement
 typeof'action :: ActionD andThen -> Action'Types
@@ -210,7 +220,7 @@ typeof'action (Put_{}) = Action'Put
 typeof'action (Flip{}) = Action'Flip
 typeof'action (Remove{}) = Action'Remove
 typeof'action (Create'Modifier{}) = Action'Create'Modifier
-typeof'action (Get'self _) = Action'Get'self
+typeof'action (Get'active'player _) = Action'Get'active'player
 typeof'action (Get'all'players _) = Action'Get'all'players
 typeof'action (Request'movement{}) = Action'Request'movement
 
@@ -222,7 +232,7 @@ data Transformation
   | Set'The'Activated'Side'Of ArtifactO To Side
   | Set' DiceO To Dice
   | Roll' DiceO
-  | Create' Modifier
+  | Create' ModifierO
   | Give'Dust'Seal To PlayerO
   | Remove'Dust'Seal From PlayerO
   | Put' DiceO Onto (Either ArtifactO AreaO)
@@ -253,7 +263,7 @@ data Game'Time = Game'Time
 data Game'State
   = Game'State
   { players :: [PlayerO]
-  , modifiers :: [Modifier]
+  , modifiers :: [ModifierO]
   , rng :: StdGen
   , game'object'count :: Int
   }
