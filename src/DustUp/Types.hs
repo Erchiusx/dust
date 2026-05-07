@@ -153,7 +153,7 @@ data instance Game'Object Modifier = Modifier
 -- rather than pure player type, dice type, etc.
 data Movement
   = Pass By PlayerO
-  | DustUp ArtifactO Certain Side With DiceO By PlayerO
+  | DustUp ArtifactO Certain Side With (Either DustSeal DiceO) By PlayerO
   | Reroll (Those DiceO) By PlayerO
   | Attack PlayerO With DiceO By PlayerO
   | Defence With DiceO By PlayerO
