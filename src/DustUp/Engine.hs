@@ -1,14 +1,22 @@
 module DustUp.Engine where
 
-import Control.Monad (forM, guard, replicateM)
+import Control.Lens
+import Control.Monad (forM, forM_, guard, replicateM)
 import Control.Monad.Free
 import Control.Monad.RWS
+import Control.Monad.State
+import Control.Monad.Writer
+import Data.Foldable (traverse_)
 import Data.Function ((&))
+import Data.Functor
+import Data.Generics.Product.Fields
 import Data.IORef
 import Data.List (find)
 import Data.Maybe (fromMaybe)
+import Data.Monoid
 import DustUp.LiteralWords
 import DustUp.Types
+import GHC.Generics (Generic)
 import GHC.IO (unsafePerformIO)
 import System.Random
 
@@ -23,6 +31,7 @@ data Runtime
   , runtime'pending :: Maybe Pending'Input
   , active'player :: Game'ID
   }
+  deriving Generic
 
 data Pending'Input
   = Pending'Movement
@@ -41,6 +50,7 @@ data Engine'State
   { runtime :: Runtime
   , queue :: ActionM ()
   }
+  deriving Generic
 
 --------------------------------------------------------------------------------
 -- Global wasm-instance state
@@ -118,7 +128,7 @@ runEngine
 runEngine old m = do
   Just runtime <- read'Runtime
   let (new, Engine'State{runtime = runtime', queue}, l) = runRWS m old $ Engine'State runtime (Pure ())
-  let (transformed, triggered) = runtime' `apply'transformations` l
+  let (triggered, transformed) = runtime' `apply'transformations` l
   write'Runtime transformed
   let next = queue >> triggered
   case next of
@@ -126,29 +136,80 @@ runEngine old m = do
       return new
     _ -> runEngine new (resolve next)
 
+engine'game :: Lens' Engine'State Game'State
+engine'game =
+  field @"runtime"
+    . field @"runtime'state"
+
 assign'object :: EngineM Int
 assign'object = do
-  engine@Engine'State
-    { runtime = old@Runtime{runtime'state = state@Game'State{game'object'count}}
-    } <-
-    get
-  let count = game'object'count + 1
-  put $
-    engine
-      { runtime =
-          old
-            { runtime'state =
-                state
-                  { game'object'count = count
-                  }
-            }
-      }
-  return game'object'count
+  oid <- use $ engine'game . field @"game'object'count"
+  engine'game . field @"game'object'count" .= oid + 1
+  pure oid
 
--- TODO:
+type CheckerM = RWS Runtime (ActionM (), Dual (Endo Runtime)) ()
+runChecker :: CheckerM () -> Runtime -> (ActionM (), Runtime)
+runChecker m r =
+  let ((), (), (continuation, Dual (Endo rf))) = runRWS m r ()
+   in (continuation, rf r)
+
+trigger :: Game'State -> Event -> ActionM ()
+trigger game@Game'State{triggers} Event{transformation, during} =
+  forM_
+    triggers
+    ( \Trigger{condition, action} ->
+        if checkCondition condition game during transformation then action else Pure ()
+    )
+
+state'transform :: Transformation -> Dual (Endo Runtime)
+state'transform =
+  Dual . Endo . \case
+    Modify'The'Life'Of Player{oid} By n ->
+      field @"runtime'state"
+        . field @"players"
+        . traversed
+        . filtered (\player -> player.oid == oid)
+        . field' @"life"
+        %~ (+ n)
+    Create'Modifier' modifier ->
+      field @"runtime'state"
+        . field @"modifiers"
+        %~ (modifier :)
+    Create'Trigger' trigger ->
+      field @"runtime'state"
+        . field @"triggers"
+        %~ (trigger :)
+
+-- state'check :: Event -> RWS Runtime (ActionM (), Dual (Endo Runtime)) () ()
+-- state'check event@Event{transformation} = do
+--   state <- asks runtime'state
+--   let
+--     triggered = trigger state event
+--     transform = state'transform transformation
+--   tell (triggered, transform)
+
+-- apply'transformations
+--   :: Runtime -> [Event] -> (ActionM (), Runtime)
+-- apply'transformations runtime [] = (Pure (), runtime)
+-- apply'transformations runtime events =
+--   ((\(Dual patch) -> appEndo patch runtime) <$>) $
+--     (\((), (), a) -> a) $
+--       runRWS @Runtime @(ActionM (), Dual (Endo Runtime)) @()
+--         (forM_ events state'check)
+--         runtime
+--         ()
+state'check :: Event -> CheckerM ()
+state'check event@Event{transformation} = do
+  state <- asks runtime'state
+  let
+    triggered = trigger state event
+    transform = state'transform transformation
+  tell (triggered, transform)
+
 apply'transformations
-  :: Runtime -> [Event] -> (Runtime, ActionM ())
-apply'transformations = undefined
+  :: Runtime -> [Event] -> (ActionM (), Runtime)
+apply'transformations runtime events =
+  runChecker (traverse_ state'check events) runtime
 
 --------------------------------------------------------------------------------
 -- Transpile: Movement -> ActionM
@@ -177,15 +238,17 @@ apply'modifiers
   -> ActionD (ActionM ())
   -> EngineM Transformation
 apply'modifiers raw action = do
-  Engine'State{runtime} <- get
-  let Runtime{runtime'state = state@Game'State{modifiers}} = runtime
+  game <- use engine'game
   return $
     foldl'
       (&)
       raw
-      [ applyModifier modifier state action
-      | Modifier{modifier} <- modifiers
+      [ applyModifier modifier game action
+      | Modifier{modifier} <- game.modifiers
       ]
+
+tells :: MonadWriter [w] m => w -> m ()
+tells = tell . (: [])
 
 interpret
   :: ActionD (ActionM ())
@@ -233,75 +296,75 @@ interpret action = case action of
     resolve continuation
   Roll n continuation -> do
     objectIds <- replicateM n assign'object
-    state <- get
-    let runtime = state.runtime
-    let game = runtime.runtime'state
+    game <- use engine'game
     let rng = game.rng
     let (rns, rng') = uniformListR @Integer n (0, 5) rng
     let raw'dices = map (fromInteger @Dice) rns
     let dices = zipWith Dice objectIds raw'dices
-    put $
-      state
-        { runtime =
-            runtime
-              { runtime'state =
-                  game
-                    { rng = rng'
-                    }
-              }
-        }
+    engine'game . field @"rng" .= rng'
     resolve (continuation dices)
   Put_ dices Onto target From movement continuation -> do
-    events <-
-      forM
-        dices
-        ( \dice -> do
-            eventtrans <- apply'modifiers (Put' dice Onto target) action
-            return $
-              Event
-                { transformation = eventtrans
-                , during = action
-                }
-        )
-    tell events
+    forM
+      dices
+      ( \dice -> do
+          eventtrans <- apply'modifiers (Put' dice Onto target) action
+          return $
+            Event
+              { transformation = eventtrans
+              , during = action
+              }
+      )
+      >>= tell
     resolve continuation
   Flip object To dice From movement continuation -> do
     let raw = Set' object To dice
     modified <- apply'modifiers raw action
-    tell
-      [ Event
-          { transformation = modified
-          , during = action
-          }
-      ]
+    tells
+      Event
+        { transformation = modified
+        , during = action
+        }
     resolve continuation
   Remove dices From target From movement continuation -> do
-    events <-
-      forM
-        dices
-        ( \dice -> do
-            eventtrans <- apply'modifiers (Remove' dice From target) action
-            return $
-              Event
-                { transformation = eventtrans
-                , during = action
-                }
-        )
-    tell events
+    forM
+      dices
+      ( \dice -> do
+          eventtrans <- apply'modifiers (Remove' dice From target) action
+          return $
+            Event
+              { transformation = eventtrans
+              , during = action
+              }
+      )
+      >>= tell
     resolve continuation
   Create'Modifier modifier From movement continuation -> do
     oid <- assign'object
     let
       object = Modifier oid modifier
-      raw = Create' object
+      raw = Create'Modifier' object
     modified <- apply'modifiers raw action
-    tell
-      [ Event
-          { transformation = modified
-          , during = action
-          }
-      ]
+    tells
+      Event
+        { transformation = modified
+        , during = action
+        }
     resolve (continuation object)
+  Create'Trigger ability From movement continuation -> do
+    oid <- assign'object
+    case ability of
+      condition `Triggered` action' -> do
+        let
+          object = Trigger oid condition action'
+          raw = Create'Trigger' object
+        modified <- apply'modifiers raw action
+        tells
+          Event
+            { transformation = modified
+            , during = action
+            }
+        resolve (continuation $ Just object)
+      _ -> resolve (continuation Nothing)
   Get'active'player continuation -> do
     Engine'State{runtime} <- get
     let Runtime{active'player, runtime'state = game} = runtime
@@ -315,6 +378,7 @@ interpret action = case action of
     resolve (continuation players)
   Request'movement prompt From player options continuation -> do
     return $ Engine'Paused $ Pending'Movement prompt player options continuation
+
 --------------------------------------------------------------------------------
 -- Modifier / Condition
 --------------------------------------------------------------------------------
@@ -348,11 +412,3 @@ interpret action = case action of
 --   :: Runtime
 --   -> [Transformation]
 --   -> Runtime
-
---------------------------------------------------------------------------------
--- Time
---------------------------------------------------------------------------------
-
--- advance'Time
---   :: Game'Time
---   -> Game'Time

@@ -93,10 +93,9 @@ data Artifact
 data Ability
   = Condition `Triggered` (ActionM ())
   | Activated
-    {
-      movement :: ActionM ()
+      { movement :: ActionM ()
       , isSP :: Bool
-    }
+      }
   | Static Modifier
 
 newtype Condition
@@ -126,6 +125,7 @@ type DiceO = Game'Object Dice
 type ArtifactO = Game'Object Artifact
 type AreaO = Game'Object Area
 type ModifierO = Game'Object Modifier
+type TriggerO = Game'Object Ability
 
 data instance Game'Object Player = Player
   { oid :: Game'ID
@@ -133,21 +133,32 @@ data instance Game'Object Player = Player
   , artifacts :: (ArtifactO, ArtifactO, ArtifactO)
   , areas :: (AreaO, AreaO, AreaO)
   }
+  deriving Generic
 
 data instance Game'Object Dice = Dice
   { oid :: Game'ID
   , dice :: Dice
   }
+  deriving Generic
 
 data instance Game'Object Artifact = Artifact
   { oid :: Game'ID
   , artifact :: Artifact
   }
+  deriving Generic
 
 data instance Game'Object Modifier = Modifier
   { oid :: Game'ID
   , modifier :: Modifier
   }
+  deriving Generic
+
+data instance Game'Object Ability = Trigger
+  { oid :: Game'ID
+  , condition :: Condition
+  , action :: ActionM ()
+  }
+  deriving Generic
 
 -- the arguments passed to Movement should be GameObject wraps
 -- rather than pure player type, dice type, etc.
@@ -159,6 +170,7 @@ data Movement
   | Defence With DiceO By PlayerO
   | Activate ArtifactO Certain Ability With (Those DiceO) By PlayerO
   | Select (Those DiceO) By PlayerO
+  deriving Generic
 
 data Movement'Options'
   = Option'Pass
@@ -168,7 +180,7 @@ data Movement'Options'
   | Option'Defence
   | Option'Activate
   | Option'Select
-  deriving (Enum, Show, Eq, Bounded)
+  deriving (Enum, Show, Eq, Bounded, Generic)
 
 type Movement'Options = Bitmask8 Movement'Options'
 
@@ -188,12 +200,13 @@ data ActionD andThen
   | Flip DiceO To Dice From Movement andThen
   | Remove (Those DiceO) From (Either ArtifactO AreaO) From Movement andThen
   | Create'Modifier Modifier From Movement (ModifierO -> andThen)
+  | Create'Trigger Ability From Movement (Maybe TriggerO -> andThen)
   | -- monadic readers
     Get'active'player (PlayerO -> andThen)
   | Get'all'players ([PlayerO] -> andThen)
   | -- feedback
     Request'movement String From PlayerO Movement'Options (Movement -> andThen)
-  deriving Functor
+  deriving (Functor, Generic)
 
 -- $(make'action'types ''ActionD)
 data Action'Types
@@ -206,9 +219,11 @@ data Action'Types
   | Action'Flip
   | Action'Remove
   | Action'Create'Modifier
+  | Action'Create'Trigger
   | Action'Get'active'player
   | Action'Get'all'players
   | Action'Request'movement
+  deriving (Eq, Generic)
 typeof'action :: ActionD andThen -> Action'Types
 typeof'action (Deal{}) = Action'Deal
 typeof'action (Heal{}) = Action'Heal
@@ -223,6 +238,7 @@ typeof'action (Create'Modifier{}) = Action'Create'Modifier
 typeof'action (Get'active'player _) = Action'Get'active'player
 typeof'action (Get'all'players _) = Action'Get'all'players
 typeof'action (Request'movement{}) = Action'Request'movement
+typeof'action (Create'Trigger{}) = Action'Create'Trigger
 
 type ActionM = Free ActionD
 
@@ -231,13 +247,14 @@ data Transformation
   | Set'The'Counter'Of ArtifactO To Int
   | Set'The'Activated'Side'Of ArtifactO To Side
   | Set' DiceO To Dice
-  | Roll' DiceO
-  | Create' ModifierO
+  | Create'Modifier' ModifierO
+  | Create'Trigger' TriggerO
   | Give'Dust'Seal To PlayerO
   | Remove'Dust'Seal From PlayerO
   | Put' DiceO Onto (Either ArtifactO AreaO)
   | Remove' DiceO From (Either ArtifactO AreaO)
   | Time'Advance
+  deriving Generic
 
 data Phase
   = UPKEEP
@@ -247,7 +264,7 @@ data Phase
   | MAIN
   | DISCARD
   | END
-  deriving (Show, Eq, Enum, Bounded)
+  deriving (Show, Eq, Enum, Bounded, Generic)
 
 next :: Phase -> Maybe Phase
 next p
@@ -259,14 +276,17 @@ data Game'Time = Game'Time
   , player :: Game'ID
   , phase :: Phase
   }
+  deriving Generic
 
 data Game'State
   = Game'State
   { players :: [PlayerO]
   , modifiers :: [ModifierO]
+  , triggers :: [TriggerO]
   , rng :: StdGen
   , game'object'count :: Int
   }
+  deriving Generic
 
 init'Game
   :: Player -> Player -> StdGen -> Game'State
@@ -296,6 +316,7 @@ init'Game p1 p2 rng =
         ]
     , rng = rng
     , modifiers = []
+    , triggers = []
     , game'object'count = 14
     }
 
@@ -304,3 +325,9 @@ $( makeFlagValues
      ''Movement'Options'
      [t|Movement'Options|]
  )
+
+instance Semigroup (ActionM ()) where
+  (<>) = (>>)
+
+instance Monoid (ActionM ()) where
+  mempty = Pure ()

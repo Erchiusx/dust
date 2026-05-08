@@ -58,11 +58,12 @@ common warnings
 
 common dependencies
   build-depends:
-    , base
     , aeson             >=2.2.3    && <2.3
+    , base
     , bitmasks          <0.1
     , bytestring        >=0.12.2   && <0.13
     , free              >=5.2      && <5.3
+    , generic-lens
     , ghc-experimental  >=9.1202.0 && <9.1203
     , lens              >=5.3.5    && <5.4
     , mtl               >=2.3.1    && <2.4
