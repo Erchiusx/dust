@@ -166,146 +166,95 @@ state'transform :: Transformation -> Dual (Endo Runtime)
 state'transform =
   Dual . Endo . \case
     Modify'The'Life'Of Player{oid} By n ->
-      id
-        . field @"runtime'state"
-        . field @"players"
-        . traversed
-        . filtered (\player -> player.oid == oid)
+      runtime'players
+        . with'oid oid
         . field' @"life"
         %~ (+ n)
     Set'The'Counter'Of Artifact{oid} To n ->
-      id
-        . field @"runtime'state"
-        . field @"players"
-        . traversed
-        . field' @"artifacts"
-        . each
-        . filtered ((== oid) . (.oid))
+      runtime'artifacts
+        . with'oid oid
         %~ ( (field' @"counters" .~)
                =<< (min <$> (.template.cap) <*> pure (max 0 n))
            )
     Set'The'Activated'Side'Of Artifact{oid} To side ->
-      id
-        . field @"runtime'state"
-        . field @"players"
-        . traversed
-        . field' @"artifacts"
-        . each
-        . filtered ((== oid) . (.oid))
+      runtime'artifacts
+        . with'oid oid
         . field' @"actived'side"
         ?~ side
     Give'Dust'Seal To player ->
-      id
-        . field @"runtime'state"
-        . field @"dust'seal"
+      runtime'dust'seal
         ?~ player
     Remove'Dust'Seal{} ->
-      id
-        . field @"runtime'state"
-        . field @"dust'seal"
+      runtime'dust'seal
         .~ Nothing
     Set' Dice{oid} To dice ->
-      id
-        . field @"runtime'state"
-        . field @"players"
-        . traversed
-        . field' @"areas"
-        . each
+      runtime'areas
         . field' @"area"
         . traversed
-        . filtered ((== oid) . (.oid))
+        . with'oid oid
         . field' @"dice"
         .~ dice
     Create'Modifier' modifier ->
-      id
-        . field @"runtime'state"
-        . field @"modifiers"
+      runtime'modifiers
         %~ (modifier :)
     Create'Trigger' trigger ->
-      field @"runtime'state"
-        . field @"triggers"
+      runtime'triggers
         %~ (trigger :)
     Put' dice@Dice{oid} Onto (Left Artifact{oid = aoid}) ->
-      id
-        . field @"runtime'state"
-        . field @"players"
-        . traversed
-        %~ ( field' @"artifacts"
-               . each
-               . filtered ((== aoid) . (.oid))
-               . field' @"dices"
+      runtime'players
+        %~ ( player'artifacts
+               . with'oid aoid
+               . artifact'dices
                %~ (dice :)
            )
-          . ( field' @"artifacts"
-                . each
-                . field' @"dices"
-                %~ filter ((/= oid) . (.oid))
+          . ( player'artifacts
+                . artifact'dices
+                %~ without'oid oid
             )
-          . ( field' @"areas"
-                . each
-                . field' @"area"
-                %~ filter ((/= oid) . (.oid))
+          . ( player'areas
+                . area'dices
+                %~ without'oid oid
             )
     Put' dice@Dice{oid} Onto (Right Area{oid = aoid}) ->
-      id
-        . field @"runtime'state"
-        . field @"players"
-        . traversed
-        %~ ( field' @"areas"
-               . each
-               . filtered ((== aoid) . (.oid))
-               . field' @"area"
+      runtime'players
+        %~ ( player'areas
+               . with'oid aoid
+               . area'dices
                %~ (dice :)
            )
-          . ( field' @"areas"
-                . each
-                . field' @"area"
-                %~ filter ((/= oid) . (.oid))
+          . ( player'areas
+                . area'dices
+                %~ without'oid oid
             )
-          . ( field' @"artifacts"
-                . each
-                . field' @"dices"
-                %~ filter ((/= oid) . (.oid))
+          . ( player'artifacts
+                . artifact'dices
+                %~ without'oid oid
             )
     Remove' Dice{oid} From (Left Artifact{oid = aoid}) ->
-      id
-        . field @"runtime'state"
-        . field @"players"
-        . traversed
-        . field' @"artifacts"
-        . each
-        . filtered ((== aoid) . (.oid))
-        . field' @"dices"
-        %~ filter ((/= oid) . (.oid))
+      runtime'artifacts
+        . with'oid aoid
+        . artifact'dices
+        %~ without'oid oid
     Remove' Dice{oid} From (Right Area{oid = aoid}) ->
-      id
-        . field @"runtime'state"
-        . field @"players"
-        . traversed
-        . field' @"areas"
-        . each
-        . filtered ((== aoid) . (.oid))
-        . field' @"area"
-        %~ filter ((/= oid) . (.oid))
+      runtime'areas
+        . with'oid aoid
+        . area'dices
+        %~ without'oid oid
     Time'Advance ->
       \runtime ->
         let
           time = runtime.runtime'time
           players = runtime.runtime'state.players
           player'ids = map (.oid) players
-
           phase'wraps =
             time.phase == maxBound
-
           phase' =
             if phase'wraps
               then minBound
               else succ time.phase
-
           player'wraps =
             phase'wraps
               && time.player == last player'ids
-
           player' =
             if phase'wraps
               then
@@ -313,14 +262,54 @@ state'transform =
                   then head player'ids
                   else (player'ids !!) $ (+ 1) (fromJust (find (== time.player) player'ids))
               else time.player
-
-          round' = if player'wraps then time.round + 1 else time.round
+          round' =
+            if player'wraps
+              then time.round + 1
+              else time.round
          in
           runtime
-            & field @"runtime'time" . field @"phase" .~ phase'
-            & field @"runtime'time" . field @"player" .~ player'
-            & field @"runtime'time" . field @"round" .~ round'
-            & field @"active'player" .~ player'
+            & runtime'time
+              %~ (field @"phase" .~ phase')
+                . (field @"player" .~ player')
+                . (field @"round" .~ round')
+            & runtime'active'player .~ player'
+ where
+  runtime'state = field @"runtime'state"
+  runtime'time = field @"runtime'time"
+  runtime'active'player = field @"active'player"
+  runtime'players =
+    runtime'state
+      . field @"players"
+      . traversed
+  runtime'artifacts =
+    runtime'players
+      . player'artifacts
+  runtime'areas =
+    runtime'players
+      . player'areas
+  runtime'dust'seal =
+    runtime'state
+      . field @"dust'seal"
+  runtime'modifiers =
+    runtime'state
+      . field @"modifiers"
+  runtime'triggers =
+    runtime'state
+      . field @"triggers"
+  player'artifacts =
+    field' @"artifacts"
+      . each
+  player'areas =
+    field' @"areas"
+      . each
+  artifact'dices =
+    field' @"dices"
+  area'dices =
+    field' @"area"
+  with'oid oid =
+    filtered ((== oid) . (.oid))
+  without'oid oid =
+    filter ((/= oid) . (.oid))
 
 -- state'check :: Event -> RWS Runtime (ActionM (), Dual (Endo Runtime)) () ()
 -- state'check event@Event{transformation} = do
