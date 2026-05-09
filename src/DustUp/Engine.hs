@@ -1,3 +1,4 @@
+{- HLINT ignore "Redundant id" -}
 module DustUp.Engine where
 
 import Control.Lens
@@ -12,7 +13,7 @@ import Data.Functor
 import Data.Generics.Product.Fields
 import Data.IORef
 import Data.List (find)
-import Data.Maybe (fromMaybe)
+import Data.Maybe
 import Data.Monoid
 import DustUp.LiteralWords
 import DustUp.Types
@@ -165,20 +166,161 @@ state'transform :: Transformation -> Dual (Endo Runtime)
 state'transform =
   Dual . Endo . \case
     Modify'The'Life'Of Player{oid} By n ->
-      field @"runtime'state"
+      id
+        . field @"runtime'state"
         . field @"players"
         . traversed
         . filtered (\player -> player.oid == oid)
         . field' @"life"
         %~ (+ n)
+    Set'The'Counter'Of Artifact{oid} To n ->
+      id
+        . field @"runtime'state"
+        . field @"players"
+        . traversed
+        . field' @"artifacts"
+        . each
+        . filtered ((== oid) . (.oid))
+        %~ ( (field' @"counters" .~)
+               =<< (min <$> (.template.cap) <*> pure (max 0 n))
+           )
+    Set'The'Activated'Side'Of Artifact{oid} To side ->
+      id
+        . field @"runtime'state"
+        . field @"players"
+        . traversed
+        . field' @"artifacts"
+        . each
+        . filtered ((== oid) . (.oid))
+        . field' @"actived'side"
+        ?~ side
+    Give'Dust'Seal To player ->
+      id
+        . field @"runtime'state"
+        . field @"dust'seal"
+        ?~ player
+    Remove'Dust'Seal{} ->
+      id
+        . field @"runtime'state"
+        . field @"dust'seal"
+        .~ Nothing
+    Set' Dice{oid} To dice ->
+      id
+        . field @"runtime'state"
+        . field @"players"
+        . traversed
+        . field' @"areas"
+        . each
+        . field' @"area"
+        . traversed
+        . filtered ((== oid) . (.oid))
+        . field' @"dice"
+        .~ dice
     Create'Modifier' modifier ->
-      field @"runtime'state"
+      id
+        . field @"runtime'state"
         . field @"modifiers"
         %~ (modifier :)
     Create'Trigger' trigger ->
       field @"runtime'state"
         . field @"triggers"
         %~ (trigger :)
+    Put' dice@Dice{oid} Onto (Left Artifact{oid = aoid}) ->
+      id
+        . field @"runtime'state"
+        . field @"players"
+        . traversed
+        %~ ( field' @"artifacts"
+               . each
+               . filtered ((== aoid) . (.oid))
+               . field' @"dices"
+               %~ (dice :)
+           )
+          . ( field' @"artifacts"
+                . each
+                . field' @"dices"
+                %~ filter ((/= oid) . (.oid))
+            )
+          . ( field' @"areas"
+                . each
+                . field' @"area"
+                %~ filter ((/= oid) . (.oid))
+            )
+    Put' dice@Dice{oid} Onto (Right Area{oid = aoid}) ->
+      id
+        . field @"runtime'state"
+        . field @"players"
+        . traversed
+        %~ ( field' @"areas"
+               . each
+               . filtered ((== aoid) . (.oid))
+               . field' @"area"
+               %~ (dice :)
+           )
+          . ( field' @"areas"
+                . each
+                . field' @"area"
+                %~ filter ((/= oid) . (.oid))
+            )
+          . ( field' @"artifacts"
+                . each
+                . field' @"dices"
+                %~ filter ((/= oid) . (.oid))
+            )
+    Remove' Dice{oid} From (Left Artifact{oid = aoid}) ->
+      id
+        . field @"runtime'state"
+        . field @"players"
+        . traversed
+        . field' @"artifacts"
+        . each
+        . filtered ((== aoid) . (.oid))
+        . field' @"dices"
+        %~ filter ((/= oid) . (.oid))
+    Remove' Dice{oid} From (Right Area{oid = aoid}) ->
+      id
+        . field @"runtime'state"
+        . field @"players"
+        . traversed
+        . field' @"areas"
+        . each
+        . filtered ((== aoid) . (.oid))
+        . field' @"area"
+        %~ filter ((/= oid) . (.oid))
+    Time'Advance ->
+      \runtime ->
+        let
+          time = runtime.runtime'time
+          players = runtime.runtime'state.players
+          player'ids = map (.oid) players
+
+          phase'wraps =
+            time.phase == maxBound
+
+          phase' =
+            if phase'wraps
+              then minBound
+              else succ time.phase
+
+          player'wraps =
+            phase'wraps
+              && time.player == last player'ids
+
+          player' =
+            if phase'wraps
+              then
+                if player'wraps
+                  then head player'ids
+                  else (player'ids !!) $ (+ 1) (fromJust (find (== time.player) player'ids))
+              else time.player
+
+          round' = if player'wraps then time.round + 1 else time.round
+         in
+          runtime
+            & field @"runtime'time" . field @"phase" .~ phase'
+            & field @"runtime'time" . field @"player" .~ player'
+            & field @"runtime'time" . field @"round" .~ round'
+            & field @"active'player" .~ player'
 
 -- state'check :: Event -> RWS Runtime (ActionM (), Dual (Endo Runtime)) () ()
 -- state'check event@Event{transformation} = do
@@ -254,7 +396,7 @@ interpret
   :: ActionD (ActionM ())
   -> EngineM Engine'Status
 interpret action = case action of
-  Deal n Damage To player By source From movement continuation -> do
+  Deal n Damage To player By _ From _ continuation -> do
     let raw = Modify'The'Life'Of player By (-n)
     modified <- apply'modifiers raw action
     tell
@@ -264,7 +406,7 @@ interpret action = case action of
           }
       ]
     resolve continuation
-  Heal n To player By source From movement continuation -> do
+  Heal n To player By _ From _ continuation -> do
     let raw = Modify'The'Life'Of player By n
     modified <- apply'modifiers raw action
     tell
@@ -274,7 +416,7 @@ interpret action = case action of
           }
       ]
     resolve continuation
-  Set'the'counter'on artifact To n From movement continuation -> do
+  Set'the'counter'on artifact To n From _ continuation -> do
     let raw = Set'The'Counter'Of artifact To n
     modified <- apply'modifiers raw action
     tell
@@ -284,7 +426,7 @@ interpret action = case action of
           }
       ]
     resolve continuation
-  Turn artifact To side From movement continuation -> do
+  Turn artifact To side From _ continuation -> do
     let raw = Set'The'Activated'Side'Of artifact To side
     modified <- apply'modifiers raw action
     tell
@@ -303,7 +445,7 @@ interpret action = case action of
     let dices = zipWith Dice objectIds raw'dices
     engine'game . field @"rng" .= rng'
     resolve (continuation dices)
-  Put_ dices Onto target From movement continuation -> do
+  Put_ dices Onto target From _ continuation -> do
     forM
       dices
       ( \dice -> do
@@ -316,7 +458,7 @@ interpret action = case action of
       )
       >>= tell
     resolve continuation
-  Flip object To dice From movement continuation -> do
+  Flip object To dice From _ continuation -> do
     let raw = Set' object To dice
     modified <- apply'modifiers raw action
     tells
@@ -325,7 +467,7 @@ interpret action = case action of
         , during = action
         }
     resolve continuation
-  Remove dices From target From movement continuation -> do
+  Remove dices From target From _ continuation -> do
     forM
       dices
       ( \dice -> do
@@ -338,7 +480,7 @@ interpret action = case action of
       )
       >>= tell
     resolve continuation
-  Create'Modifier modifier From movement continuation -> do
+  Create'Modifier modifier From _ continuation -> do
     oid <- assign'object
     let
       object = Modifier oid modifier
@@ -350,7 +492,7 @@ interpret action = case action of
         , during = action
         }
     resolve (continuation object)
-  Create'Trigger ability From movement continuation -> do
+  Create'Trigger ability From _ continuation -> do
     oid <- assign'object
     case ability of
       condition `Triggered` action' -> do

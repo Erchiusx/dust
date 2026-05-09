@@ -6,6 +6,7 @@ import Data.Bitmask
 import Data.Text
 import DustUp.LiteralWords
 import GHC.Generics (Generic)
+import GHC.Records (HasField (..))
 import System.Random
 
 type Game'ID = Int
@@ -57,16 +58,17 @@ instance Num Dice where
   a * b = fromInteger (repr a * repr b)
   signum = const 1
 
-type Area = [Dice]
+type Area = [DiceO]
 data instance Game'Object Area = Area {oid :: Int, area :: Area}
+  deriving Generic
 data Artifact
   = ColumnOne
       { speed :: Int
       , will :: Int
       , name :: Text
       , tag :: Text
-      , left :: Ability
-      , right :: Ability
+      , left :: [Ability]
+      , right :: [Ability]
       }
   | ColumnTwo
       { distribution
@@ -79,16 +81,21 @@ data Artifact
              )
       , name :: Text
       , tag :: Text
-      , left :: Ability
-      , right :: Ability
+      , left :: [Ability]
+      , right :: [Ability]
       }
   | ColumnThree
       { life :: Int
       , capability :: Int
       , name :: Text
-      , charge :: Ability
+      , charge :: [Ability]
       , sp :: Ability
       }
+
+instance HasField "cap" Artifact Int where
+  getField ColumnOne{} = 1
+  getField ColumnTwo{} = 1
+  getField ColumnThree{capability} = capability
 
 data Ability
   = Condition `Triggered` (ActionM ())
@@ -132,6 +139,7 @@ data instance Game'Object Player = Player
   , life :: Int
   , artifacts :: (ArtifactO, ArtifactO, ArtifactO)
   , areas :: (AreaO, AreaO, AreaO)
+  , template :: Player
   }
   deriving Generic
 
@@ -143,7 +151,10 @@ data instance Game'Object Dice = Dice
 
 data instance Game'Object Artifact = Artifact
   { oid :: Game'ID
-  , artifact :: Artifact
+  , template :: Artifact
+  , actived'side :: Maybe Side
+  , counters :: Int
+  , dices :: [DiceO]
   }
   deriving Generic
 
@@ -285,40 +296,50 @@ data Game'State
   , triggers :: [TriggerO]
   , rng :: StdGen
   , game'object'count :: Int
+  , dust'seal :: Maybe PlayerO
   }
   deriving Generic
 
 init'Game
   :: Player -> Player -> StdGen -> Game'State
 init'Game p1 p2 rng =
-  Game'State
-    { players =
-        [ Player
-            { oid = 0
-            , life = let ColumnThree{life = l} = p1.three in l
-            , artifacts =
-                ( Artifact 1 p1.one
-                , Artifact 2 p1.two
-                , Artifact 3 p1.three
-                )
-            , areas = (Area 4 [], Area 5 [], Area 6 [])
-            }
-        , Player
-            { oid = 7
-            , life = let ColumnThree{life = l} = p2.three in l
-            , artifacts =
-                ( Artifact 8 p2.one
-                , Artifact 9 p2.two
-                , Artifact 10 p2.three
-                )
-            , areas = (Area 11 [], Area 12 [], Area 13 [])
-            }
-        ]
-    , rng = rng
-    , modifiers = []
-    , triggers = []
-    , game'object'count = 14
-    }
+  let
+    p1' =
+      Player
+        { oid = 0
+        , life = let ColumnThree{life = l} = p1.three in l
+        , artifacts =
+            ( Artifact 1 p1.one Nothing 0 []
+            , Artifact 2 p1.two Nothing 0 []
+            , Artifact 3 p1.three Nothing 0 []
+            )
+        , areas = (Area 4 [], Area 5 [], Area 6 [])
+        , template = p1
+        }
+    p2' =
+      Player
+        { oid = 7
+        , life = let ColumnThree{life = l} = p2.three in l
+        , artifacts =
+            ( Artifact 8 p2.one Nothing 0 []
+            , Artifact 9 p2.two Nothing 0 []
+            , Artifact 10 p2.three Nothing 0 []
+            )
+        , areas = (Area 11 [], Area 12 [], Area 13 [])
+        , template = p2
+        }
+   in
+    Game'State
+      { players =
+          [ p1'
+          , p2'
+          ]
+      , rng = rng
+      , modifiers = []
+      , triggers = []
+      , game'object'count = 14
+      , dust'seal = Just p2'
+      }
 
 $(makeFree ''ActionD)
 $( makeFlagValues
