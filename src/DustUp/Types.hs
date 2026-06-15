@@ -4,6 +4,7 @@ import Control.Monad.Free
 import Control.Monad.Free.TH
 import Data.Bitmask
 import Data.Text
+import Data.Traversable
 import DustUp.LiteralWords
 import GHC.Generics (Generic)
 import GHC.Records (HasField (..))
@@ -67,8 +68,7 @@ data Artifact
       , will :: Int
       , name :: Text
       , tag :: Text
-      , left :: [Ability]
-      , right :: [Ability]
+      , abilities :: Side -> [Ability]
       }
   | ColumnTwo
       { distribution
@@ -81,15 +81,15 @@ data Artifact
              )
       , name :: Text
       , tag :: Text
-      , left :: [Ability]
-      , right :: [Ability]
+      , abilities :: Side -> [Ability]
       }
   | ColumnThree
       { life :: Int
       , capability :: Int
       , name :: Text
-      , charge :: [Ability]
+      , charge :: Ability
       , sp :: Ability
+      , abilities :: Side -> [Ability]
       }
 
 instance HasField "cap" Artifact Int where
@@ -98,22 +98,29 @@ instance HasField "cap" Artifact Int where
   getField ColumnThree{capability} = capability
 
 data Ability
-  = Condition `Triggered` (ActionM ())
+  = Triggered
+      { runTrigger :: forall a. Game'State -> ActionD a -> Transformation -> ActionM ()
+      }
   | Activated
       { movement :: ActionM ()
       , isSP :: Bool
       }
   | Static Modifier
+  | DustUped
+      { action
+          :: Int -- counters
+          -> ActionM ()
+      }
 
-newtype Condition
-  = Condition
-  { checkCondition
-      :: forall a
-       . Game'State
-      -> ActionD a
-      -> Transformation
-      -> Bool
-  }
+-- newtype Condition
+--   = Condition
+--   { checkCondition
+--       :: forall a
+--        . Game'State
+--       -> ActionD a
+--       -> Transformation
+--       -> Bool
+--   }
 
 newtype Modifier
   = Modifier_
@@ -166,8 +173,7 @@ data instance Game'Object Modifier = Modifier
 
 data instance Game'Object Ability = Trigger
   { oid :: Game'ID
-  , condition :: Condition
-  , action :: ActionM ()
+  , ability :: Ability
   }
   deriving Generic
 
@@ -336,10 +342,23 @@ init'Game p1 p2 rng =
           ]
       , rng = rng
       , modifiers = []
-      , triggers = []
+      , triggers = gameRuletriggers
       , game'object'count = 14
       , dust'seal = Just p2'
       }
+
+gameRuletriggers :: [TriggerO]
+gameRuletriggers = undefined
+
+-- gameRuletriggers =
+--   [ Trigger
+--       { oid = 14
+--       , condition =
+--           Condition
+--             (\_ _ -> \case Set'The'Activated'Side'Of{} -> True; _ -> False)
+--       , action =
+--       }
+--   ]
 
 $(makeFree ''ActionD)
 $( makeFlagValues

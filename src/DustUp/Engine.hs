@@ -5,11 +5,7 @@ import Control.Lens
 import Control.Monad (forM, forM_, guard, replicateM)
 import Control.Monad.Free
 import Control.Monad.RWS
-import Control.Monad.State
-import Control.Monad.Writer
 import Data.Foldable (traverse_)
-import Data.Function ((&))
-import Data.Functor
 import Data.Generics.Product.Fields
 import Data.IORef
 import Data.List (find)
@@ -154,13 +150,13 @@ runChecker m r =
   let ((), (), (continuation, Dual (Endo rf))) = runRWS m r ()
    in (continuation, rf r)
 
-trigger :: Game'State -> Event -> ActionM ()
-trigger game@Game'State{triggers} Event{transformation, during} =
-  forM_
-    triggers
-    ( \Trigger{condition, action} ->
-        if checkCondition condition game during transformation then action else Pure ()
-    )
+trigger' :: Game'State -> Event -> ActionM ()
+trigger' = undefined
+
+-- trigger' game@Game'State{triggers} Event{transformation, during} =
+--   forM_
+--     (map (.ability) triggers)
+--     $ (.trigger game during transformation)
 
 state'transform :: Transformation -> Dual (Endo Runtime)
 state'transform =
@@ -333,7 +329,7 @@ state'check :: Event -> CheckerM ()
 state'check event@Event{transformation} = do
   state <- asks runtime'state
   let
-    triggered = trigger state event
+    triggered = trigger' state event
     transform = state'transform transformation
   tell (triggered, transform)
 
@@ -484,9 +480,9 @@ interpret action = case action of
   Create'Trigger ability From _ continuation -> do
     oid <- assign'object
     case ability of
-      condition `Triggered` action' -> do
+      trigger@Triggered{} -> do
         let
-          object = Trigger oid condition action'
+          object = Trigger oid trigger
           raw = Create'Trigger' object
         modified <- apply'modifiers raw action
         tells

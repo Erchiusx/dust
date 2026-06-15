@@ -74,7 +74,11 @@ common dependencies
 
 common extensions
   default-extensions:
+    AllowAmbiguousTypes
+    DerivingVia
     DuplicateRecordFields
+    MonadComprehensions
+    MultilineStrings
     OverloadedRecordDot
     TemplateHaskell
     TypeFamilies
@@ -91,6 +95,7 @@ executable dust
     DustUp.Artifact.Column2
     DustUp.Engine
     DustUp.LiteralWords
+    DustUp.Type
     DustUp.Types
 
   -- Directories containing source files.
