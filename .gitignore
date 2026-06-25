@@ -1,6 +1,6 @@
-.vscode/
-dist/
-dist-newstyle/
-release/
-.DS_store/
-node_modules/
+/dist/
+/dist-newstyle/
+/release/
+*.pdf
+/Images/
+*.png

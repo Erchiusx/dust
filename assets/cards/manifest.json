@@ -1,0 +1,266 @@
+[
+  {
+    "id": "C001",
+    "name": "雨切",
+    "column": 1,
+    "image": "/assets/cards/C001.webp"
+  },
+  {
+    "id": "C002",
+    "name": "游龙",
+    "column": 2,
+    "image": "/assets/cards/C002.webp"
+  },
+  {
+    "id": "C003",
+    "name": "明镜",
+    "column": 3,
+    "image": "/assets/cards/C003.webp"
+  },
+  {
+    "id": "C004",
+    "name": "不详",
+    "column": 1,
+    "image": "/assets/cards/C004.webp"
+  },
+  {
+    "id": "C005",
+    "name": "影掠",
+    "column": 2,
+    "image": "/assets/cards/C005.webp"
+  },
+  {
+    "id": "C006",
+    "name": "完杀",
+    "column": 3,
+    "image": "/assets/cards/C006.webp"
+  },
+  {
+    "id": "C007",
+    "name": "主宰",
+    "column": 1,
+    "image": "/assets/cards/C007.webp"
+  },
+  {
+    "id": "C008",
+    "name": "铁壁",
+    "column": 2,
+    "image": "/assets/cards/C008.webp"
+  },
+  {
+    "id": "C009",
+    "name": "孤王",
+    "column": 3,
+    "image": "/assets/cards/C009.webp"
+  },
+  {
+    "id": "C010",
+    "name": "深红",
+    "column": 1,
+    "image": "/assets/cards/C010.webp"
+  },
+  {
+    "id": "C011",
+    "name": "顿悟",
+    "column": 2,
+    "image": "/assets/cards/C011.webp"
+  },
+  {
+    "id": "C012",
+    "name": "魔女",
+    "column": 3,
+    "image": "/assets/cards/C012.webp"
+  },
+  {
+    "id": "C013",
+    "name": "鸣雷",
+    "column": 1,
+    "image": "/assets/cards/C013.webp"
+  },
+  {
+    "id": "C014",
+    "name": "惩戒",
+    "column": 2,
+    "image": "/assets/cards/C014.webp"
+  },
+  {
+    "id": "C015",
+    "name": "残响",
+    "column": 3,
+    "image": "/assets/cards/C015.webp"
+  },
+  {
+    "id": "C016",
+    "name": "虚臾",
+    "column": 1,
+    "image": "/assets/cards/C016.webp"
+  },
+  {
+    "id": "C017",
+    "name": "幽冥",
+    "column": 2,
+    "image": "/assets/cards/C017.webp"
+  },
+  {
+    "id": "C018",
+    "name": "至黑",
+    "column": 3,
+    "image": "/assets/cards/C018.webp"
+  },
+  {
+    "id": "C019",
+    "name": "尘哀",
+    "column": 1,
+    "image": "/assets/cards/C019.webp"
+  },
+  {
+    "id": "C020",
+    "name": "兽魂",
+    "column": 2,
+    "image": "/assets/cards/C020.webp"
+  },
+  {
+    "id": "C021",
+    "name": "决意",
+    "column": 3,
+    "image": "/assets/cards/C021.webp"
+  },
+  {
+    "id": "C022",
+    "name": "死契",
+    "column": 1,
+    "image": "/assets/cards/C022.webp"
+  },
+  {
+    "id": "C023",
+    "name": "蛇蝎",
+    "column": 2,
+    "image": "/assets/cards/C023.webp"
+  },
+  {
+    "id": "C024",
+    "name": "狂舞",
+    "column": 3,
+    "image": "/assets/cards/C024.webp"
+  },
+  {
+    "id": "C025",
+    "name": "屠虎",
+    "column": 1,
+    "image": "/assets/cards/C025.webp"
+  },
+  {
+    "id": "C026",
+    "name": "哀歌",
+    "column": 2,
+    "image": "/assets/cards/C026.webp"
+  },
+  {
+    "id": "C027",
+    "name": "寒光",
+    "column": 3,
+    "image": "/assets/cards/C027.webp"
+  },
+  {
+    "id": "C028",
+    "name": "天罚",
+    "column": 1,
+    "image": "/assets/cards/C028.webp"
+  },
+  {
+    "id": "C029",
+    "name": "真言",
+    "column": 2,
+    "image": "/assets/cards/C029.webp"
+  },
+  {
+    "id": "C030",
+    "name": "救赎",
+    "column": 3,
+    "image": "/assets/cards/C030.webp"
+  },
+  {
+    "id": "C031",
+    "name": "恶兆",
+    "column": 1,
+    "image": "/assets/cards/C031.webp"
+  },
+  {
+    "id": "C032",
+    "name": "梦魇",
+    "column": 2,
+    "image": "/assets/cards/C032.webp"
+  },
+  {
+    "id": "C033",
+    "name": "凋零",
+    "column": 3,
+    "image": "/assets/cards/C033.webp"
+  },
+  {
+    "id": "C034",
+    "name": "金刚",
+    "column": 1,
+    "image": "/assets/cards/C034.webp"
+  },
+  {
+    "id": "C035",
+    "name": "千劫",
+    "column": 2,
+    "image": "/assets/cards/C035.webp"
+  },
+  {
+    "id": "C036",
+    "name": "无相",
+    "column": 3,
+    "image": "/assets/cards/C036.webp"
+  },
+  {
+    "id": "A01",
+    "name": "孤王",
+    "column": 3,
+    "image": "/assets/cards/A01.webp"
+  },
+  {
+    "id": "A02",
+    "name": "深红",
+    "column": 1,
+    "image": "/assets/cards/A02.webp"
+  },
+  {
+    "id": "A03",
+    "name": "金刚",
+    "column": 1,
+    "image": "/assets/cards/A03.webp"
+  },
+  {
+    "id": "A04",
+    "name": "兽魂",
+    "column": 2,
+    "image": "/assets/cards/A04.webp"
+  },
+  {
+    "id": "A05",
+    "name": "天罚",
+    "column": 1,
+    "image": "/assets/cards/A05.webp"
+  },
+  {
+    "id": "A06",
+    "name": "虚臾",
+    "column": 1,
+    "image": "/assets/cards/A06.webp"
+  },
+  {
+    "id": "A07",
+    "name": "完杀",
+    "column": 3,
+    "image": "/assets/cards/A07.webp"
+  },
+  {
+    "id": "A08",
+    "name": "鸣雷",
+    "column": 1,
+    "image": "/assets/cards/A08.webp"
+  }
+]

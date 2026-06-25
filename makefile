@@ -1,8 +1,10 @@
 export SHELL=/bin/zsh
-.PHONY: lint
+.DEFAULT_GOAL := dist
+
+.PHONY: dist run clean wasm lint
 
 
-define CABAL
+define WASM_CABAL
 	cabal --with-compiler=wasm32-wasi-ghc --with-hc-pkg=wasm32-wasi-ghc-pkg --with-hsc2hs=wasm32-wasi-hsc2hs $(1) $(2) $(3)
 endef
 
@@ -26,21 +28,39 @@ define NVM
 endef
 
 
-DIST=release
-TARGET=dustify
+APP_DIST=dist
+WASM_DIST=release
+SERVER_TARGET=dust
+WASM_TARGET=dustify
 SRC=src
 
-main: distpath $(DIST)/ffi.mjs
+dist:
+	cabal build exe:$(SERVER_TARGET)
+	mkdir -p $(APP_DIST)
+	install -m 755 $$(cabal list-bin exe:$(SERVER_TARGET)) $(APP_DIST)/$(SERVER_TARGET)
+	rm -rf $(APP_DIST)/assets $(APP_DIST)/client
+	cp -a assets $(APP_DIST)/assets
+	cp -a client $(APP_DIST)/client
 
-$(DIST)/ffi.mjs: $(DIST)/$(TARGET).wasm
+run: dist
+	cd $(APP_DIST) && ./$(SERVER_TARGET)
+
+clean:
+	rm -rf $(APP_DIST)
+
+wasm: wasm-distpath $(WASM_DIST)/ffi.mjs $(WASM_DIST)/$(WASM_TARGET).wasm
+
+main: wasm
+
+$(WASM_DIST)/ffi.mjs: $(WASM_DIST)/$(WASM_TARGET).wasm
 	$(call NVM, run, stable) $$(realpath $$(wasm32-wasi-ghc --print-libdir)/post-link.mjs) -i $< -o $@
 
-distpath:
-	mkdir -p release
+wasm-distpath:
+	mkdir -p $(WASM_DIST)
 
-$(DIST)/$(TARGET).wasm: $(SRC)/Dustify.hs
-	$(call CABAL, build, $(notdir $(basename $@)))
-	cp $$($(call CABAL, list-bin, $(notdir $(basename $@)))) $@
+$(WASM_DIST)/$(WASM_TARGET).wasm: $(SRC)/Dustify.hs
+	$(call WASM_CABAL, build, $(notdir $(basename $@)))
+	cp $$($(call WASM_CABAL, list-bin, $(notdir $(basename $@)))) $@
 
 lint:
 	fourmolu --config ./fourmolu.yaml -i src/

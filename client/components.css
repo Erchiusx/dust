@@ -1,0 +1,606 @@
+:host(dust-die) {
+  display: inline-grid;
+  width: clamp(1.65rem, 3.2vw, 2.2rem);
+  aspect-ratio: 1;
+  place-items: center;
+  color: var(--die-ink, #171713);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.75), transparent 42%),
+    var(--die-color, #d6c5a0);
+  border: 1px solid rgba(23, 23, 19, 0.48);
+  border-radius: 22%;
+  box-shadow:
+    inset -3px -4px 7px rgba(23, 23, 19, 0.18),
+    0 2px 5px rgba(0, 0, 0, 0.24);
+  font: 700 clamp(0.75rem, 1.5vw, 1rem) / 1 Georgia, serif;
+  transform: rotate(var(--die-tilt, 0deg));
+}
+
+:host(dust-combat-field) {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: auto 1fr auto;
+  align-items: stretch;
+  gap: 0.5rem;
+  padding: clamp(0.8rem, 2vh, 1.4rem) clamp(0.7rem, 1.5vw, 1.2rem);
+}
+
+:host(dust-combat-field) .lane {
+  position: relative;
+  display: grid;
+  min-height: 3rem;
+  place-items: center;
+  padding: 0.25rem;
+}
+
+:host(dust-combat-field) .lane::before {
+  content: "";
+  position: absolute;
+  inset: 50% 0 auto;
+  border-top: 1px dashed rgba(237, 228, 204, 0.18);
+}
+
+:host(dust-artifact-field) {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: auto 1fr auto;
+  align-items: stretch;
+  gap: 0.6rem;
+  padding: clamp(0.75rem, 1.8vh, 1.2rem) clamp(0.7rem, 1.4vw, 1.1rem);
+}
+
+:host(dust-artifact-field[side="opponent"]) .dice-bay {
+  grid-row: 1;
+}
+
+:host(dust-artifact-field[side="opponent"]) .artifact {
+  grid-row: 3;
+}
+
+:host(dust-artifact-field[side="player"]) .artifact {
+  grid-row: 1;
+}
+
+:host(dust-artifact-field[side="player"]) .dice-bay {
+  grid-row: 3;
+}
+
+:host(dust-artifact-field) .artifact {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 0.35rem 1fr auto;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.45rem 0.7rem 0.45rem 0.45rem;
+  overflow: hidden;
+  background:
+    linear-gradient(100deg, rgba(255, 255, 255, 0.055), transparent 65%),
+    rgba(8, 8, 7, 0.33);
+  border: 1px solid rgba(237, 228, 204, 0.15);
+  border-radius: 3px;
+}
+
+:host(dust-artifact-field) .artifact::after {
+  position: absolute;
+  right: 0.45rem;
+  bottom: 0.15rem;
+  color: rgba(237, 228, 204, 0.1);
+  font: 700 0.48rem/1 Georgia, serif;
+  letter-spacing: 0.18em;
+}
+
+:host(dust-artifact-field[side="opponent"]) .artifact::after {
+  content: "OPPONENT";
+}
+
+:host(dust-artifact-field[side="player"]) .artifact::after {
+  content: "PLAYER";
+}
+
+:host(dust-artifact-field) .column-mark {
+  align-self: stretch;
+  background: var(--column-color);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--column-color), transparent 45%);
+}
+
+:host(dust-artifact-field) h3,
+:host(dust-artifact-field) p {
+  margin: 0;
+}
+
+:host(dust-artifact-field) h3 {
+  overflow: hidden;
+  color: var(--ink-strong);
+  font: 600 clamp(0.82rem, 1.5vw, 1rem) / 1.1 "Noto Serif CJK SC", "Songti SC", serif;
+  letter-spacing: 0.1em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:host(dust-artifact-field) p {
+  margin-top: 0.22rem;
+  color: var(--ink-muted);
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+}
+
+:host(dust-artifact-field) .charge {
+  display: grid;
+  width: 2rem;
+  aspect-ratio: 1;
+  place-items: center;
+  color: var(--column-color);
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font: 600 0.85rem/1 Georgia, serif;
+}
+
+:host(dust-artifact-field) .dice-bay {
+  display: flex;
+  min-width: 0;
+  padding-top: 0.45rem;
+  border-bottom: 1px solid rgba(237, 228, 204, 0.17);
+}
+
+:host(dust-artifact-field) .die-area {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 2.8rem;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.45rem 0.3rem 0.95rem;
+  overflow: hidden;
+  background: rgba(7, 7, 6, 0.18);
+  border: 1px solid rgba(237, 228, 204, 0.08);
+  border-bottom: 0;
+}
+
+:host(dust-artifact-field) .die-area::after {
+  position: absolute;
+  right: 0.25rem;
+  bottom: 0.15rem;
+  color: var(--ink-muted);
+  font-size: 0.52rem;
+  letter-spacing: 0.1em;
+}
+
+:host(dust-artifact-field) .die-area[data-kind="attack"]::after {
+  content: "攻击骰区域";
+  color: #d98768;
+}
+
+:host(dust-artifact-field) .die-area[data-kind="defense"]::after {
+  content: "防御骰区域";
+  color: #75a9b5;
+}
+
+:host(dust-artifact-field) .die-area[data-kind="thought"]::after {
+  content: "冥想骰区域";
+  color: #c4ad70;
+}
+
+:host(dust-artifact-field) .empty-slot {
+  display: grid;
+  width: clamp(1.65rem, 3.2vw, 2.2rem);
+  aspect-ratio: 1;
+  place-items: center;
+  color: rgba(237, 228, 204, 0.22);
+  border: 1px dashed currentColor;
+  border-radius: 22%;
+  font-size: 0.8rem;
+}
+
+:host(dust-board-zone) {
+  position: relative;
+  display: grid;
+  min-height: 0;
+  grid-template-rows: 1fr 1fr;
+  overflow: hidden;
+  background:
+    linear-gradient(90deg, var(--zone-tint), transparent 22%),
+    rgba(255, 255, 255, 0.012);
+  border-right: 1px solid var(--line-strong);
+}
+
+:host(dust-board-zone[kind="combat"]) {
+  --zone-tint: rgba(174, 73, 43, 0.12);
+}
+
+:host(dust-board-zone[column="1"]) {
+  --zone-tint: rgba(196, 91, 57, 0.1);
+  --column-color: #d47750;
+}
+
+:host(dust-board-zone[column="2"]) {
+  --zone-tint: rgba(63, 139, 126, 0.1);
+  --column-color: #68a99b;
+}
+
+:host(dust-board-zone[column="3"]) {
+  --zone-tint: rgba(180, 147, 69, 0.11);
+  --column-color: #cfad5d;
+}
+
+:host(dust-board-zone) .zone-label {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  left: 50%;
+  padding: 0.18rem 0.3rem;
+  color: rgba(237, 228, 204, 0.38);
+  background: var(--surface);
+  border: 1px solid rgba(237, 228, 204, 0.1);
+  font: 700 0.55rem/1 Georgia, "Songti SC", serif;
+  letter-spacing: 0.08em;
+  transform: translate(-50%, -50%);
+}
+
+:host(dust-board-zone) .opponent {
+  min-height: 0;
+  background: linear-gradient(180deg, rgba(116, 42, 28, 0.075), transparent);
+  border-bottom: 1px dashed rgba(237, 228, 204, 0.17);
+}
+
+:host(dust-board-zone) .player {
+  min-height: 0;
+  background: linear-gradient(0deg, rgba(46, 104, 66, 0.07), transparent);
+}
+
+:host(dust-seal-marker) {
+  position: relative;
+  display: grid;
+  width: clamp(4.5rem, 8vw, 6.5rem);
+  aspect-ratio: 1;
+  place-items: center;
+  pointer-events: none;
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.55));
+}
+
+:host(dust-seal-marker) .aura {
+  position: absolute;
+  z-index: 0;
+  inset: -44%;
+  opacity: 0;
+  background:
+    radial-gradient(circle, rgba(241, 214, 127, 0.72) 0 7%, transparent 35%),
+    conic-gradient(
+      from 316deg at 50% 50%,
+      transparent 0 38deg,
+      rgba(255, 224, 128, 0.95) 40deg 50deg,
+      transparent 52deg 360deg
+    );
+  clip-path: polygon(
+    50% 0,
+    63% 25%,
+    57% 25%,
+    69% 45%,
+    50% 36%,
+    31% 45%,
+    43% 25%,
+    37% 25%
+  );
+  filter: blur(2px) drop-shadow(0 -10px 10px rgba(245, 198, 78, 0.8));
+  transform-origin: center;
+  transition: opacity 180ms ease, transform 260ms ease;
+  animation: seal-pulse 1.9s ease-in-out infinite;
+}
+
+:host(dust-seal-marker[owner="opponent"]) .aura {
+  opacity: 1;
+  transform: rotate(0deg);
+}
+
+:host(dust-seal-marker[owner="player"]) .aura {
+  opacity: 1;
+  transform: rotate(180deg);
+}
+
+:host(dust-seal-marker) .ring {
+  position: absolute;
+  z-index: 1;
+  inset: -8%;
+  border: 1px solid rgba(227, 217, 188, 0.34);
+  border-radius: 50%;
+  box-shadow:
+    inset 0 0 12px rgba(255, 255, 255, 0.12),
+    0 0 0 4px rgba(9, 9, 8, 0.55);
+}
+
+:host(dust-seal-marker) img {
+  position: relative;
+  z-index: 2;
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: contain;
+  border-radius: 50%;
+}
+
+:host(dust-public-info) {
+  display: grid;
+  min-width: 0;
+  grid-template-rows: auto auto auto;
+  color: var(--ink);
+}
+
+:host(dust-public-info) .panel {
+  display: grid;
+  min-height: 5.8rem;
+  grid-template-columns: minmax(0, 1fr) auto var(--seal-extension);
+  align-items: center;
+  gap: clamp(0.7rem, 2vw, 1.5rem);
+  padding: 0.8rem clamp(0.8rem, 2vw, 1.5rem);
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.025), transparent 48%),
+    rgba(9, 9, 8, 0.9);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.42);
+}
+
+:host(dust-public-info) .panel::after {
+  content: "";
+  min-width: 0;
+}
+
+:host(dust-public-info) .stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(0.35rem, 1vw, 0.8rem);
+}
+
+:host(dust-public-info) .stat-column,
+:host(dust-public-info) .metric {
+  text-align: center;
+}
+
+:host(dust-public-info) .stat-column b,
+:host(dust-public-info) .metric b {
+  display: block;
+  color: var(--ink-strong);
+  font: 600 clamp(1rem, 1.6vw, 1.35rem) / 1 Georgia, serif;
+}
+
+:host(dust-public-info) .stat-column span,
+:host(dust-public-info) .metric span {
+  color: var(--ink-muted);
+  font-size: 0.54rem;
+  letter-spacing: 0.14em;
+}
+
+:host(dust-public-info) .stat-column .opponent {
+  color: #df8064;
+}
+
+:host(dust-public-info) .stat-column .player {
+  color: #82b68b;
+}
+
+:host(dust-public-info) .stat-column span {
+  display: block;
+  margin-block: 0.28rem;
+}
+
+:host(dust-public-info) .public {
+  display: flex;
+  gap: clamp(0.8rem, 2vw, 1.5rem);
+  padding-inline: clamp(0.5rem, 1vw, 0.9rem);
+  border-inline: 1px solid rgba(237, 228, 204, 0.12);
+}
+
+:host(dust-public-info) .public .metric b {
+  color: #e7cf86;
+}
+
+:host(dust-public-info) .timeline {
+  display: flex;
+  width: 100%;
+  color: rgba(237, 228, 204, 0.24);
+}
+
+:host(dust-public-info) .tick {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  height: 1.45rem;
+  flex: 1 1 0;
+  place-items: center;
+  color: inherit;
+  border-inline: 1px solid currentColor;
+  font-size: 0.5rem;
+  letter-spacing: 0.08em;
+}
+
+:host(dust-public-info) .opponent .tick {
+  align-content: end;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid currentColor;
+}
+
+:host(dust-public-info) .player .tick {
+  align-content: start;
+  padding-top: 0.25rem;
+  border-top: 1px solid currentColor;
+}
+
+:host(dust-public-info) .tick::after {
+  content: attr(data-label);
+  color: currentColor;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+:host(dust-public-info) .tick.active::after {
+  color: #f0cf69;
+}
+
+:host(dust-public-info) .opponent .tick.active {
+  background: linear-gradient(
+    to top,
+    rgba(240, 207, 105, 0.3),
+    rgba(240, 207, 105, 0.08) 48%,
+    transparent
+  );
+  border-bottom: 3px solid #f0cf69;
+  box-shadow:
+    inset 0 -5px 8px rgba(240, 207, 105, 0.18),
+    0 5px 9px rgba(240, 207, 105, 0.42);
+}
+
+:host(dust-public-info) .player .tick.active {
+  background: linear-gradient(
+    to bottom,
+    rgba(240, 207, 105, 0.3),
+    rgba(240, 207, 105, 0.08) 48%,
+    transparent
+  );
+  border-top: 3px solid #f0cf69;
+}
+
+:host(dust-game-board) {
+  position: relative;
+  display: grid;
+  min-width: 64rem;
+  min-height: 100dvh;
+  grid-template-columns: minmax(15rem, 1.15fr) repeat(3, minmax(15rem, 1fr));
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 82% 12%, rgba(165, 121, 55, 0.09), transparent 28rem),
+    radial-gradient(circle at 12% 78%, rgba(54, 121, 104, 0.08), transparent 32rem),
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.012) 0 1px, transparent 1px 9px),
+    var(--surface);
+}
+
+:host(dust-game-board) dust-seal-marker {
+  z-index: 8;
+  grid-column: 1;
+  grid-row: 1;
+  place-self: center end;
+  transform: translateX(50%);
+}
+
+:host(dust-game-board) dust-public-info {
+  --seal-extension: clamp(3rem, 4vw, 3.5rem);
+  z-index: 7;
+  grid-column: 1;
+  grid-row: 1;
+  align-self: center;
+  justify-self: stretch;
+}
+
+:host(dust-game-board) dust-board-zone {
+  grid-row: 1;
+}
+
+:host(dust-game-board) dust-board-zone[kind="combat"] {
+  grid-column: 1;
+}
+
+:host(dust-game-board) dust-board-zone[column="1"] {
+  z-index: 9;
+  grid-column: 2;
+  background:
+    linear-gradient(90deg, rgba(196, 91, 57, 0.08), transparent 24%),
+    var(--surface);
+}
+
+:host(dust-game-board) dust-board-zone[column="2"] {
+  grid-column: 3;
+}
+
+:host(dust-game-board) dust-board-zone[column="3"] {
+  grid-column: 4;
+}
+
+:host(dust-game-board) header {
+  position: fixed;
+  z-index: 10;
+  top: 0.55rem;
+  right: 0.7rem;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.35rem 0.55rem;
+  color: var(--ink-muted);
+  background: rgba(15, 15, 13, 0.82);
+  border: 1px solid rgba(237, 228, 204, 0.13);
+  border-radius: 3px;
+  backdrop-filter: blur(9px);
+  font-size: 0.61rem;
+  letter-spacing: 0.12em;
+}
+
+:host(dust-game-board) .seal-demo {
+  display: flex;
+  gap: 0.2rem;
+  padding-left: 0.55rem;
+  border-left: 1px solid rgba(237, 228, 204, 0.15);
+}
+
+:host(dust-game-board) .seal-demo button {
+  padding: 0.22rem 0.38rem;
+  color: var(--ink-muted);
+  background: transparent;
+  border: 1px solid rgba(237, 228, 204, 0.15);
+  border-radius: 2px;
+  font: inherit;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+
+:host(dust-game-board) .seal-demo button[aria-pressed="true"] {
+  color: #f3d985;
+  border-color: rgba(243, 217, 133, 0.55);
+  box-shadow: inset 0 0 8px rgba(243, 217, 133, 0.12);
+}
+
+:host(dust-game-board) .connection {
+  width: 0.45rem;
+  aspect-ratio: 1;
+  background: #7eb58a;
+  border-radius: 50%;
+  box-shadow: 0 0 8px #7eb58a;
+}
+
+@keyframes seal-pulse {
+  0%,
+  100% {
+    filter: blur(2px) drop-shadow(0 -8px 8px rgba(245, 198, 78, 0.65));
+  }
+
+  50% {
+    filter: blur(1px) drop-shadow(0 -13px 13px rgba(255, 218, 105, 0.95));
+  }
+}
+
+@media (max-width: 680px) {
+  :host(dust-combat-field),
+  :host(dust-artifact-field) {
+    padding-inline: 0.7rem;
+  }
+
+  :host(dust-artifact-field) .artifact {
+    gap: 0.4rem;
+  }
+
+  :host(dust-artifact-field) .dice-bay {
+    gap: 0.2rem;
+  }
+
+  :host(dust-artifact-field) .die-area {
+    padding-inline: 0.2rem;
+  }
+}
+
+@media (max-height: 680px) {
+  :host(dust-game-board) {
+    min-height: 38rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :host(dust-seal-marker) .aura {
+    animation: none;
+  }
+}

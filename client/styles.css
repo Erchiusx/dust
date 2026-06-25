@@ -1,0 +1,25 @@
+:root {
+  color-scheme: dark;
+  --surface: #171713;
+  --ink: #d7cfbc;
+  --ink-strong: #f0e8d3;
+  --ink-muted: #8d887a;
+  --line-strong: rgba(237, 228, 204, 0.2);
+  font-family: "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", sans-serif;
+  background: var(--surface);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-width: 320px;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: auto;
+}
