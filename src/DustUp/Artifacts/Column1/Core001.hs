@@ -16,10 +16,7 @@ definition =
         [ Text.pack "中央突破：消耗最多3个冥想骰，弃置对方同等数量的防御骰。"
         , Text.pack "裁雨流：攻击骰造成伤害后，可保留点数并移动至防御或冥想区。"
         ]
-    , unsupported'rules =
-        [ Text.pack "消耗恰好3骰后的不可抵挡效果尚缺回合临时状态。"
-        , Text.pack "裁雨流需要保留已使用攻击骰，当前攻击流程会先删除该骰。"
-        ]
+    , unsupported'rules = []
     , build = buildArtifact
     }
 
@@ -36,9 +33,19 @@ buildArtifact context =
     , actived = \case
         Left'Side -> [centralBreakthrough context]
         Right'Side -> []
-    , static = const []
+    , static = \case
+        Left'Side -> []
+        Right'Side -> [rainCutStyle context]
     , charged = const noChargedAbility
     }
+
+rainCutStyle :: Artifact'Context -> Ability Static
+rainCutStyle context =
+  Static' $
+    preserveDamagingAttackDieModifier
+      (Text.pack "裁雨流")
+      context.owner'id
+      (areaForCategory context Defencing)
 
 centralBreakthrough :: Artifact'Context -> Ability Actived
 centralBreakthrough context =
@@ -53,9 +60,22 @@ centralBreakthrough context =
     , run = \game costs ->
         case opponentsOf context.owner'id game of
           opponentID : _ -> do
-            let defenceDice =
-                  playerAreaDice opponentID Defencing game
-                discardCount = min (length costs) (length defenceDice)
+            if length costs == 3
+              then do
+                create'Modifier
+                  ( unblockableAttackModifier
+                      (Text.pack "中央突破-不可抵挡")
+                      context.owner'id
+                  )
+                  (Just context.artifact'id)
+                  (Just $ endOfCurrentTurn game.time)
+                  Nothing
+                pure ()
+              else pure ()
+            let
+              defenceDice =
+                playerAreaDice opponentID Defencing game
+              discardCount = min (length costs) (length defenceDice)
             if discardCount == 0
               then pure ()
               else do

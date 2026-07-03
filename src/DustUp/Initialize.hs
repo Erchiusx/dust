@@ -92,21 +92,19 @@ validateDistinctArtifacts
   -> Player'Loadout
   -> Either Initialize'Error ()
 validateDistinctArtifacts firstLoadout secondLoadout =
-  case
-    [ cardID
-    | cardID <-
-        [ firstLoadout.column'one
-        , firstLoadout.column'two
-        , firstLoadout.column'three
-        , secondLoadout.column'one
-        , secondLoadout.column'two
-        , secondLoadout.column'three
-        ]
-    , count cardID allCards > 1
-    ]
-    of
-      duplicate : _ -> Left $ Duplicate'Artifact duplicate
-      [] -> Right ()
+  case [ cardID
+       | cardID <-
+           [ firstLoadout.column'one
+           , firstLoadout.column'two
+           , firstLoadout.column'three
+           , secondLoadout.column'one
+           , secondLoadout.column'two
+           , secondLoadout.column'three
+           ]
+       , count cardID allCards > 1
+       ] of
+    duplicate : _ -> Left $ Duplicate'Artifact duplicate
+    [] -> Right ()
  where
   allCards =
     [ firstLoadout.column'one
@@ -125,23 +123,25 @@ buildGame
   -> Resolved'Loadout
   -> Game
 buildGame generator firstPlayer firstLoadout secondLoadout =
-  let firstLayout = Player'Layout 0 (2, 3, 4) (5, 6, 7)
-      secondLayout = Player'Layout 1 (8, 9, 10) (11, 12, 13)
-      (nextID, firstObjects) =
-        instantiatePlayer 14 firstLayout firstLoadout
-      (finalID, secondObjects) =
-        instantiatePlayer nextID secondLayout secondLoadout
-      secondPlayer = 1 - firstPlayer
-   in Game
-        { objects = firstObjects <> secondObjects
-        , time = Game'Time 0 firstPlayer SupplyPhase
-        , next'object'id = finalID
-        , dust'seal'holder = Just secondPlayer
-        , dust'fall = 0
-        , winners = Nothing
-        , random'generator = generator
-        , history = History []
-        }
+  let
+    firstLayout = Player'Layout 0 (2, 3, 4) (5, 6, 7)
+    secondLayout = Player'Layout 1 (8, 9, 10) (11, 12, 13)
+    (nextID, firstObjects) =
+      instantiatePlayer 14 firstLayout firstLoadout
+    (finalID, secondObjects) =
+      instantiatePlayer nextID secondLayout secondLoadout
+    secondPlayer = 1 - firstPlayer
+   in
+    Game
+      { objects = firstObjects <> secondObjects
+      , time = Game'Time 0 firstPlayer SupplyPhase
+      , next'object'id = finalID
+      , dust'seal'holder = Just secondPlayer
+      , dust'fall = 0
+      , winners = Nothing
+      , random'generator = generator
+      , history = History []
+      }
 
 data Player'Layout = Player'Layout
   { player'id :: Game'ID
@@ -155,44 +155,54 @@ instantiatePlayer
   -> Resolved'Loadout
   -> (Game'ID, [(Game'ID, Game'Object)])
 instantiatePlayer nextID layout loadout =
-  let (oneID, twoID, threeID) = layout.artifact'ids
-      (attackAreaID, defenceAreaID, thoughtAreaID) = layout.area'ids
-      oneContext =
-        Artifact'Context oneID layout.player'id layout.area'ids
-      twoContext =
-        Artifact'Context twoID layout.player'id layout.area'ids
-      threeContext =
-        Artifact'Context threeID layout.player'id layout.area'ids
-      onePrototype = loadout.one.build oneContext
-      twoPrototype = loadout.two.build twoContext
-      threePrototype = loadout.three.build threeContext
-      playerPrototype =
-        PlayerTemplate onePrototype twoPrototype threePrototype
-      (afterOne, oneObject, oneAbilities) =
-        instantiateColumnOne nextID layout.player'id oneID onePrototype
-      (afterTwo, twoObject, twoAbilities) =
-        instantiateColumnTwo afterOne layout.player'id twoID twoPrototype
-      (afterThree, threeObject, threeAbilities) =
-        instantiateColumnThree afterTwo layout.player'id threeID threePrototype
-      playerObject =
-        Object $
-          Player
-            layout.player'id
-            playerPrototype
-            threePrototype.life
-            layout.artifact'ids
-            layout.area'ids
-      areaObjects =
-        [ (attackAreaID, Object $ Area'Object attackAreaID (Area Attacking) layout.player'id [])
-        , (defenceAreaID, Object $ Area'Object defenceAreaID (Area Defencing) layout.player'id [])
-        , (thoughtAreaID, Object $ Area'Object thoughtAreaID (Area Thoughtful) layout.player'id [])
-        ]
-      fixedObjects =
-        [ (layout.player'id, playerObject)
-        , (oneID, Object oneObject)
-        , (twoID, Object twoObject)
-        , (threeID, Object threeObject)
-        ]
+  let
+    (oneID, twoID, threeID) = layout.artifact'ids
+    (attackAreaID, defenceAreaID, thoughtAreaID) = layout.area'ids
+    oneContext =
+      Artifact'Context oneID layout.player'id layout.area'ids
+    twoContext =
+      Artifact'Context twoID layout.player'id layout.area'ids
+    threeContext =
+      Artifact'Context threeID layout.player'id layout.area'ids
+    onePrototype = loadout.one.build oneContext
+    twoPrototype = loadout.two.build twoContext
+    threePrototype = loadout.three.build threeContext
+    playerPrototype =
+      PlayerTemplate onePrototype twoPrototype threePrototype
+    (afterOne, oneObject, oneAbilities) =
+      instantiateColumnOne nextID layout.player'id oneID onePrototype
+    (afterTwo, twoObject, twoAbilities) =
+      instantiateColumnTwo afterOne layout.player'id twoID twoPrototype
+    (afterThree, threeObject, threeAbilities) =
+      instantiateColumnThree afterTwo layout.player'id threeID threePrototype
+    playerObject =
+      Object $
+        Player
+          layout.player'id
+          playerPrototype
+          threePrototype.life
+          layout.artifact'ids
+          layout.area'ids
+    areaObjects =
+      [
+        ( attackAreaID
+        , Object $ Area'Object attackAreaID (Area Attacking) layout.player'id []
+        )
+      ,
+        ( defenceAreaID
+        , Object $ Area'Object defenceAreaID (Area Defencing) layout.player'id []
+        )
+      ,
+        ( thoughtAreaID
+        , Object $ Area'Object thoughtAreaID (Area Thoughtful) layout.player'id []
+        )
+      ]
+    fixedObjects =
+      [ (layout.player'id, playerObject)
+      , (oneID, Object oneObject)
+      , (twoID, Object twoObject)
+      , (threeID, Object threeObject)
+      ]
    in
     ( afterThree
     , fixedObjects
@@ -212,39 +222,40 @@ instantiateColumnOne
      , [(Game'ID, Game'Object)]
      )
 instantiateColumnOne nextID ownerID artifactID prototype =
-  let (afterTriggers, triggerIDs, triggerObjects) =
-        instantiateSideAbilities
-          nextID
-          Triggered'Ability
-          prototype.triggers
-      (afterActived, activedIDs, activedObjects) =
-        instantiateSideAbilities
-          afterTriggers
-          Actived'Ability
-          prototype.actived
-      (afterStatic, staticIDs, staticObjects) =
-        instantiateSideAbilities
-          afterActived
-          Static'Ability
-          prototype.static
-      (afterCharged, chargedIDs, chargedObjects) =
-        instantiateSideSingle
-          afterStatic
-          Charged'Ability
-          prototype.charged
-      object =
-        ColumnOne
-          artifactID
-          ownerID
-          False
-          Left'Side
-          prototype
-          triggerIDs
-          activedIDs
-          staticIDs
-          chargedIDs
-          0
-          []
+  let
+    (afterTriggers, triggerIDs, triggerObjects) =
+      instantiateSideAbilities
+        nextID
+        Triggered'Ability
+        prototype.triggers
+    (afterActived, activedIDs, activedObjects) =
+      instantiateSideAbilities
+        afterTriggers
+        Actived'Ability
+        prototype.actived
+    (afterStatic, staticIDs, staticObjects) =
+      instantiateSideAbilities
+        afterActived
+        Static'Ability
+        prototype.static
+    (afterCharged, chargedIDs, chargedObjects) =
+      instantiateSideSingle
+        afterStatic
+        Charged'Ability
+        prototype.charged
+    object =
+      ColumnOne
+        artifactID
+        ownerID
+        False
+        Left'Side
+        prototype
+        triggerIDs
+        activedIDs
+        staticIDs
+        chargedIDs
+        0
+        []
    in
     ( afterCharged
     , object
@@ -261,39 +272,40 @@ instantiateColumnTwo
      , [(Game'ID, Game'Object)]
      )
 instantiateColumnTwo nextID ownerID artifactID prototype =
-  let (afterTriggers, triggerIDs, triggerObjects) =
-        instantiateSideAbilities
-          nextID
-          Triggered'Ability
-          prototype.triggers
-      (afterActived, activedIDs, activedObjects) =
-        instantiateSideAbilities
-          afterTriggers
-          Actived'Ability
-          prototype.actived
-      (afterStatic, staticIDs, staticObjects) =
-        instantiateSideAbilities
-          afterActived
-          Static'Ability
-          prototype.static
-      (afterCharged, chargedIDs, chargedObjects) =
-        instantiateSideSingle
-          afterStatic
-          Charged'Ability
-          prototype.charged
-      object =
-        ColumnTwo
-          artifactID
-          ownerID
-          False
-          prototype
-          Left'Side
-          triggerIDs
-          activedIDs
-          staticIDs
-          chargedIDs
-          0
-          []
+  let
+    (afterTriggers, triggerIDs, triggerObjects) =
+      instantiateSideAbilities
+        nextID
+        Triggered'Ability
+        prototype.triggers
+    (afterActived, activedIDs, activedObjects) =
+      instantiateSideAbilities
+        afterTriggers
+        Actived'Ability
+        prototype.actived
+    (afterStatic, staticIDs, staticObjects) =
+      instantiateSideAbilities
+        afterActived
+        Static'Ability
+        prototype.static
+    (afterCharged, chargedIDs, chargedObjects) =
+      instantiateSideSingle
+        afterStatic
+        Charged'Ability
+        prototype.charged
+    object =
+      ColumnTwo
+        artifactID
+        ownerID
+        False
+        prototype
+        Left'Side
+        triggerIDs
+        activedIDs
+        staticIDs
+        chargedIDs
+        0
+        []
    in
     ( afterCharged
     , object
@@ -310,56 +322,56 @@ instantiateColumnThree
      , [(Game'ID, Game'Object)]
      )
 instantiateColumnThree nextID ownerID artifactID prototype =
-  let levels = [0 .. prototype.capability]
-      (afterTriggers, triggerIDs, triggerObjects) =
-        instantiateLevelSideAbilities
-          nextID
-          levels
-          Triggered'Ability
-          prototype.triggers
-      (afterActived, activedIDs, activedObjects) =
-        instantiateLevelSideAbilities
-          afterTriggers
-          levels
-          Actived'Ability
-          prototype.actived
-      (afterStatic, staticIDs, staticObjects) =
-        instantiateLevelSideAbilities
-          afterActived
-          levels
-          Static'Ability
-          prototype.static
-      (afterCharged, chargedIDs, chargedObjects) =
-        instantiateLevelSideSingle
-          afterStatic
-          levels
-          Charged'Ability
-          prototype.charged
-      ultimateID = afterCharged
-      ultimateObject =
-        ( ultimateID
-        , Object $
-            Ability'Object
-              ultimateID
-              (Actived'Ability prototype.ultimate)
-              False
-        )
-      object =
-        ColumnThree
-          artifactID
-          ownerID
-          False
-          prototype
-          Left'Side
-          0
-          triggerIDs
-          activedIDs
-          staticIDs
-          chargedIDs
-          ultimateID
-          False
-          0
-          []
+  let
+    levels = [0 .. prototype.capability]
+    (afterTriggers, triggerIDs, triggerObjects) =
+      instantiateLevelSideAbilities
+        nextID
+        levels
+        Triggered'Ability
+        prototype.triggers
+    (afterActived, activedIDs, activedObjects) =
+      instantiateLevelSideAbilities
+        afterTriggers
+        levels
+        Actived'Ability
+        prototype.actived
+    (afterStatic, staticIDs, staticObjects) =
+      instantiateLevelSideAbilities
+        afterActived
+        levels
+        Static'Ability
+        prototype.static
+    (afterCharged, chargedIDs, chargedObjects) =
+      instantiateLevelSideSingle
+        afterStatic
+        levels
+        Charged'Ability
+        prototype.charged
+    ultimateID = afterCharged
+    ultimateObject =
+      ( ultimateID
+      , Object $
+          Ability'Object
+            ultimateID
+            (Actived'Ability prototype.ultimate)
+            False
+      )
+    object =
+      ColumnThree
+        artifactID
+        ownerID
+        False
+        prototype
+        Left'Side
+        0
+        triggerIDs
+        activedIDs
+        staticIDs
+        chargedIDs
+        ultimateID
+        False
+        []
    in
     ( ultimateID + 1
     , object
@@ -379,15 +391,17 @@ instantiateSideAbilities
      , [(Game'ID, Game'Object)]
      )
 instantiateSideAbilities nextID wrap abilities =
-  let (afterLeft, leftIDs, leftObjects) =
-        instantiateAbilities nextID wrap $ abilities Left'Side
-      (afterRight, rightIDs, rightObjects) =
-        instantiateAbilities afterLeft wrap $ abilities Right'Side
-      ids side =
-        case side of
-          Left'Side -> leftIDs
-          Right'Side -> rightIDs
-   in (afterRight, ids, leftObjects <> rightObjects)
+  let
+    (afterLeft, leftIDs, leftObjects) =
+      instantiateAbilities nextID wrap $ abilities Left'Side
+    (afterRight, rightIDs, rightObjects) =
+      instantiateAbilities afterLeft wrap $ abilities Right'Side
+    ids side =
+      case side of
+        Left'Side -> leftIDs
+        Right'Side -> rightIDs
+   in
+    (afterRight, ids, leftObjects <> rightObjects)
 
 instantiateSideSingle
   :: Game'ID
@@ -398,15 +412,17 @@ instantiateSideSingle
      , [(Game'ID, Game'Object)]
      )
 instantiateSideSingle nextID wrap ability =
-  let (afterLeft, leftID, leftObject) =
-        instantiateAbility nextID wrap $ ability Left'Side
-      (afterRight, rightID, rightObject) =
-        instantiateAbility afterLeft wrap $ ability Right'Side
-      ids side =
-        case side of
-          Left'Side -> leftID
-          Right'Side -> rightID
-   in (afterRight, ids, [leftObject, rightObject])
+  let
+    (afterLeft, leftID, leftObject) =
+      instantiateAbility nextID wrap $ ability Left'Side
+    (afterRight, rightID, rightObject) =
+      instantiateAbility afterLeft wrap $ ability Right'Side
+    ids side =
+      case side of
+        Left'Side -> leftID
+        Right'Side -> rightID
+   in
+    (afterRight, ids, [leftObject, rightObject])
 
 instantiateLevelSideAbilities
   :: Game'ID
@@ -418,23 +434,25 @@ instantiateLevelSideAbilities
      , [(Game'ID, Game'Object)]
      )
 instantiateLevelSideAbilities nextID levels wrap abilities =
-  let (finalID, entries) =
-        mapAccumL
-          ( \currentID (level, side) ->
-              let (next, ids, objects) =
-                    instantiateAbilities
-                      currentID
-                      wrap
-                      (abilities level side)
-               in (next, ((level, side), ids, objects))
-          )
-          nextID
-          [(level, side) | level <- levels, side <- [Left'Side, Right'Side]]
-      ids level side =
-        maybe [] (\(_, found, _) -> found) $
-          findEntry (level, side) entries
-      objects = concatMap (\(_, _, values) -> values) entries
-   in (finalID, ids, objects)
+  let
+    (finalID, entries) =
+      mapAccumL
+        ( \currentID (level, side) ->
+            let (next, ids, objects) =
+                  instantiateAbilities
+                    currentID
+                    wrap
+                    (abilities level side)
+             in (next, ((level, side), ids, objects))
+        )
+        nextID
+        [(level, side) | level <- levels, side <- [Left'Side, Right'Side]]
+    ids level side =
+      maybe [] (\(_, found, _) -> found) $
+        findEntry (level, side) entries
+    objects = concatMap (\(_, _, values) -> values) entries
+   in
+    (finalID, ids, objects)
 
 instantiateLevelSideSingle
   :: Game'ID
@@ -446,23 +464,25 @@ instantiateLevelSideSingle
      , [(Game'ID, Game'Object)]
      )
 instantiateLevelSideSingle nextID levels wrap ability =
-  let (finalID, entries) =
-        mapAccumL
-          ( \currentID (level, side) ->
-              let (next, abilityID, object) =
-                    instantiateAbility
-                      currentID
-                      wrap
-                      (ability level side)
-               in (next, ((level, side), abilityID, object))
-          )
-          nextID
-          [(level, side) | level <- levels, side <- [Left'Side, Right'Side]]
-      ids level side =
-        maybe (-1) (\(_, found, _) -> found) $
-          findEntry (level, side) entries
-      objects = map (\(_, _, object) -> object) entries
-   in (finalID, ids, objects)
+  let
+    (finalID, entries) =
+      mapAccumL
+        ( \currentID (level, side) ->
+            let (next, abilityID, object) =
+                  instantiateAbility
+                    currentID
+                    wrap
+                    (ability level side)
+             in (next, ((level, side), abilityID, object))
+        )
+        nextID
+        [(level, side) | level <- levels, side <- [Left'Side, Right'Side]]
+    ids level side =
+      maybe (-1) (\(_, found, _) -> found) $
+        findEntry (level, side) entries
+    objects = map (\(_, _, object) -> object) entries
+   in
+    (finalID, ids, objects)
 
 instantiateAbilities
   :: Game'ID
@@ -489,7 +509,8 @@ instantiateAbility
 instantiateAbility abilityID wrap ability =
   ( abilityID + 1
   , abilityID
-  , ( abilityID
+  ,
+    ( abilityID
     , Object $ Ability'Object abilityID (wrap ability) False
     )
   )

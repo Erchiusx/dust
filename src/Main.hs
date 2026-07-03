@@ -25,8 +25,8 @@ import Network.Wai.Handler.Warp qualified as Warp
 import Network.Wai.Handler.WebSockets (websocketsOr)
 import Network.WebSockets qualified as WS
 import Numeric (showHex)
-import System.Environment (lookupEnv)
 import System.Entropy (getEntropy)
+import System.Environment (lookupEnv)
 import System.Random (newStdGen)
 import Text.Read (readMaybe)
 import WaiAppStatic.Types (MaxAge (NoStore))
@@ -70,12 +70,13 @@ main :: IO ()
 main = do
   port <- maybe 9160 id . (>>= readMaybe) <$> lookupEnv "PORT"
   state <- newMVar $ Server'State [] Nothing
-  let assets =
-        staticApp $
-          (defaultFileServerSettings "assets"){ssMaxAge = NoStore}
-      client =
-        staticApp $
-          (defaultWebAppSettings "client"){ssMaxAge = NoStore}
+  let
+    assets =
+      staticApp $
+        (defaultFileServerSettings "assets"){ssMaxAge = NoStore}
+    client =
+      staticApp $
+        (defaultWebAppSettings "client"){ssMaxAge = NoStore}
   putStrLn $ "DustUp server listening on http://0.0.0.0:" <> show port
   Warp.run port $ application state assets client
 
@@ -183,15 +184,16 @@ updateLoadout state seat selectedLoadout =
       Just _ ->
         pure (server, Left "loadouts are locked after the match starts")
       Nothing -> do
-        let updatedSeats =
-              map
-                ( \candidate ->
-                    if candidate.player'id == seat.player'id
-                      then candidate{loadout = Just selectedLoadout}
-                      else candidate
-                )
-                server.seats
-            updated = server{seats = updatedSeats}
+        let
+          updatedSeats =
+            map
+              ( \candidate ->
+                  if candidate.player'id == seat.player'id
+                    then candidate{loadout = Just selectedLoadout}
+                    else candidate
+              )
+              server.seats
+          updated = server{seats = updatedSeats}
         initialized <- initializeIfReady updated
         case initialized of
           Left err -> pure (server, Left err)
@@ -207,13 +209,11 @@ initializeIfReady server =
       , Just secondLoadout <- secondSeat.loadout -> do
           generator <- newStdGen
           pure $
-            case
-              initializeGameWithFirstPlayer
-                generator
-                0
-                firstLoadout
-                secondLoadout
-            of
+            case initializeGameWithFirstPlayer
+              generator
+              0
+              firstLoadout
+              secondLoadout of
               Left err -> Left $ Text.pack $ show err
               Right result -> Right server{engine = Just result}
     _ -> pure $ Right server
@@ -300,9 +300,9 @@ sendStatus connection server =
       [ "type" .= ("status" :: Text)
       , "players"
           .= [ object
-                [ "player" .= seat.player'id
-                , "ready" .= maybe False (const True) seat.loadout
-                ]
+                 [ "player" .= seat.player'id
+                 , "ready" .= maybe False (const True) seat.loadout
+                 ]
              | seat <- server.seats
              ]
       , "match" .= matchStatus server.engine
@@ -354,10 +354,12 @@ paddedHex value =
 parseCardID :: Text -> Parser Card'ID
 parseCardID value =
   case Text.uncons value of
-    Just ('C', number) | not (Text.null number) ->
-      pure $ Card'ID Core number
-    Just ('A', number) | not (Text.null number) ->
-      pure $ Card'ID Alternate number
+    Just ('C', number)
+      | not (Text.null number) ->
+          pure $ Card'ID Core number
+    Just ('A', number)
+      | not (Text.null number) ->
+          pure $ Card'ID Alternate number
     _ -> fail "card ID must look like C001 or A01"
 
 parseMovement :: Value -> Parser Movement

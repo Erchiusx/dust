@@ -1,10 +1,14 @@
 module DustUp.Type where
 
-import Control.Monad.Free
-import Control.Monad.Free.TH (makeFree)
-import Data.Kind
+import Control.Monad (join)
+import Control.Monad.Free (Free (..))
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.Free (FreeT)
+import Control.Monad.Trans.Free qualified as FreeT
+import Control.Monad.Writer.Strict (Writer, tell)
+import Data.Kind (Type)
 import Data.Text (Text)
-import Data.Typeable
+import Data.Typeable (Typeable, eqT, type (:~:) (Refl))
 import GHC.Base (Symbol)
 import GHC.Generics (Generic)
 import GHC.Records (HasField (..))
@@ -15,9 +19,10 @@ import System.Random (StdGen)
 -- the type `o` is the template for this kind of objects,
 -- while the associated datatype `Object o` refer to the dynamic stored data
 class
-  (Typeable o
+  ( Typeable o
   , HasField "oid" (Object o) Game'ID
-  , HasField "prototype" (Object o) o) =>
+  , HasField "prototype" (Object o) o
+  ) =>
   Game'Object' (o :: Type)
   where
   category :: String
@@ -37,6 +42,7 @@ castObject (Object (obj :: Object o')) =
     Nothing -> Nothing
 
 type Game'ID = Int
+type Object'Ref = Int
 
 data Side = Left'Side | Right'Side deriving (Show, Eq, Enum, Bounded)
 instance Eq a => Eq (Side -> a) where
@@ -93,7 +99,7 @@ instance Game'Object' Ability'Die where
     , face :: Dice
     }
 
-data Area = Area
+newtype Area = Area
   { area'category :: Category
   }
 
@@ -160,9 +166,9 @@ instance Game'Object' (Artifact Column'One) where
     , static :: Side -> [Game'ID]
     , charged :: Side -> Game'ID
     , counter :: Int
-    -- Only interactive ability dice are stored here. Charge indicators are
-    -- represented by the column-three artifact's charge field.
-    , dices :: [Game'ID]
+    , -- Only interactive ability dice are stored here. Charge indicators are
+      -- represented by the column-three artifact's charge field.
+      dices :: [Game'ID]
     }
 
 instance Column' Column'Two where
@@ -190,19 +196,19 @@ instance Game'Object' (Artifact Column'Two) where
   category = "artifact-column-two"
   data Object (Artifact Column'Two)
     = ColumnTwo
-      { oid :: Game'ID
-      , owner :: Game'ID
-      , activated :: Bool
-      , prototype :: Artifact Column'Two
-      , actived'side :: Side
-      , triggers :: Side -> [Game'ID]
-      , actived :: Side -> [Game'ID]
-      , static :: Side -> [Game'ID]
-      , charged :: Side -> Game'ID
-      , counter :: Int
-      -- Only interactive ability dice are stored here.
-      , dices :: [Game'ID]
-      }
+    { oid :: Game'ID
+    , owner :: Game'ID
+    , activated :: Bool
+    , prototype :: Artifact Column'Two
+    , actived'side :: Side
+    , triggers :: Side -> [Game'ID]
+    , actived :: Side -> [Game'ID]
+    , static :: Side -> [Game'ID]
+    , charged :: Side -> Game'ID
+    , counter :: Int
+    , -- Only interactive ability dice are stored here.
+      dices :: [Game'ID]
+    }
 
 type Charge'Level = Int
 
@@ -225,23 +231,22 @@ instance Game'Object' (Artifact Column'Three) where
   category = "artifact-column-three"
   data Object (Artifact Column'Three)
     = ColumnThree
-      { oid :: Game'ID
-      , owner :: Game'ID
-      , activated :: Bool
-      , prototype :: Artifact Column'Three
-      , actived'side :: Side
-      , charge :: Charge'Level
-      , triggers :: Charge'Level -> Side -> [Game'ID]
-      , actived :: Charge'Level -> Side -> [Game'ID]
-      , static :: Charge'Level -> Side -> [Game'ID]
-      , charged :: Charge'Level -> Side -> Game'ID
-      , ultimate :: Game'ID
-      , ultimate'activated :: Bool
-      , counter :: Int
-      -- Charge is engine state, not a die object. This list contains only
+    { oid :: Game'ID
+    , owner :: Game'ID
+    , activated :: Bool
+    , prototype :: Artifact Column'Three
+    , actived'side :: Side
+    , charge :: Charge'Level
+    , triggers :: Charge'Level -> Side -> [Game'ID]
+    , actived :: Charge'Level -> Side -> [Game'ID]
+    , static :: Charge'Level -> Side -> [Game'ID]
+    , charged :: Charge'Level -> Side -> Game'ID
+    , ultimate :: Game'ID
+    , ultimate'activated :: Bool
+    , -- Charge is engine state, not a die object. This list contains only
       -- interactive ability dice placed on the artifact.
-      , dices :: [Game'ID]
-      }
+      dices :: [Game'ID]
+    }
 
 data Player
   = PlayerTemplate
@@ -270,6 +275,12 @@ instance Ability' Triggered where
         -> Maybe Action
     }
 
+instance Show (Ability Triggered) where
+  show _ = "Triggered Ability"
+
+instance Eq (Ability Triggered) where
+  _ == _ = False
+
 instance Ability' Actived where
   data Ability Actived = Active
     { validate'cost
@@ -294,6 +305,15 @@ data Modifier = Modifier
       -> Action'Record
       -> Transformation
       -> (Transformation, Bool)
+  , speed'bonus :: Game -> Game'ID -> Int
+  , will'bonus :: Game -> Game'ID -> Int
+  , defence'dice'modifier
+      :: Game
+      -> Game'ID
+      -> Game'ID
+      -> Game'ID
+      -> [Game'ID]
+      -> [Game'ID]
   }
 
 instance Show Modifier where
@@ -307,6 +327,20 @@ instance Game'Object' Modifier where
   data Object Modifier = Modifier'Object
     { oid :: Game'ID
     , prototype :: Modifier
+    , source :: Maybe Game'ID
+    , expires'at :: Maybe Game'Time
+    , remaining'uses :: Maybe Int
+    , enabled :: Bool
+    }
+
+data Temporary'Trigger = Temporary'Trigger
+
+instance Game'Object' Temporary'Trigger where
+  category = "temporary-trigger"
+  data Object Temporary'Trigger = Temporary'Trigger'Object
+    { oid :: Game'ID
+    , prototype :: Temporary'Trigger
+    , ability :: Ability Triggered
     , source :: Maybe Game'ID
     , expires'at :: Maybe Game'Time
     , remaining'uses :: Maybe Int
@@ -423,12 +457,13 @@ data Movement'Options
   deriving (Show, Eq, Generic)
 
 -- ActionD contains effects that require the interpreter: observation,
--- randomness, player input, semantic damage resolution, and state commits.
+-- randomness, player input and semantic damage/modifier resolution.
 data ActionD andThen
   = Get'Game (Game -> andThen)
   | Get'Object Game'ID (Maybe Game'Object -> andThen)
   | Fresh'ID (Game'ID -> andThen)
   | Roll Int ([Dice] -> andThen)
+  | Create'Die'Object Dice (Game'ID -> andThen)
   | Deal'Damage
       { amount :: Int
       , damage'Type :: Damage'Type
@@ -448,8 +483,13 @@ data ActionD andThen
       (Maybe Game'Time)
       (Maybe Int)
       (Game'ID -> andThen)
+  | Create'Trigger
+      (Ability Triggered)
+      (Maybe Game'ID)
+      (Maybe Game'Time)
+      (Maybe Int)
+      (Game'ID -> andThen)
   | Request'Movement Movement'Options (Movement -> andThen)
-  | Commit Transformation andThen
   deriving (Functor, Generic)
 
 -- A continuation-free ActionD projection suitable for history, display and
@@ -460,6 +500,7 @@ data Action'Record
   | Get'Object'Record Game'ID
   | Fresh'ID'Record
   | Roll'Record Int
+  | Create'Die'Record Dice
   | Deal'Damage'Record Int Damage'Type (Maybe Game'ID) Game'ID
   | Heal'Record Int (Maybe Game'ID) Game'ID
   | Create'Modifier'Record
@@ -467,8 +508,12 @@ data Action'Record
       (Maybe Game'ID)
       (Maybe Game'Time)
       (Maybe Int)
+  | Create'Trigger'Record
+      (Maybe Game'ID)
+      (Maybe Game'Time)
+      (Maybe Int)
   | Request'Movement'Record Movement'Options
-  | Commit'Record Transformation
+  | Action'Completed'Record
   deriving (Show, Eq, Generic)
 
 withoutContinuation :: ActionD andThen -> Action'Record
@@ -477,27 +522,35 @@ withoutContinuation = \case
   Get'Object objectID _ -> Get'Object'Record objectID
   Fresh'ID{} -> Fresh'ID'Record
   Roll amount _ -> Roll'Record amount
+  Create'Die'Object face _ -> Create'Die'Record face
   Deal'Damage amount damageType source target _ ->
     Deal'Damage'Record amount damageType source target
   Heal amount source target _ ->
     Heal'Record amount source target
   Create'Modifier modifier source expiresAt remainingUses _ ->
     Create'Modifier'Record modifier.name source expiresAt remainingUses
+  Create'Trigger _ source expiresAt remainingUses _ ->
+    Create'Trigger'Record source expiresAt remainingUses
   Request'Movement options _ ->
     Request'Movement'Record options
-  Commit transformation _ ->
-    Commit'Record transformation
 
 -- Transformations are atomic facts. They are the only values persisted in
 -- history and applied to Game by the engine.
 data Transformation
-  = Create'Die Game'ID Dice
+  = Create'Die Object'Ref Dice
   | Delete'Die Game'ID
   | Set'Die'Face Game'ID Dice
   | Put'Die'In'Area Game'ID Game'ID
   | Remove'Die'From'Area Game'ID Game'ID
   | Put'Die'On'Artifact Game'ID Game'ID
   | Remove'Die'From'Artifact Game'ID Game'ID
+  | Attack'Defended
+      { attacker :: Game'ID
+      , defender :: Game'ID
+      , attack'Die :: Game'ID
+      , defence'Die :: Game'ID
+      , attack'amount :: Int
+      }
   | Change'Life Game'ID Int Life'Change'Reason
   | Set'Artifact'Activated Game'ID Bool
   | Set'Activated'Side Game'ID Side
@@ -506,7 +559,7 @@ data Transformation
   | Set'Ability'Activated Game'ID Bool
   | Set'Ultimate'Activated Game'ID Bool
   | Add'Modifier
-      Game'ID
+      Object'Ref
       Modifier
       (Maybe Game'ID)
       (Maybe Game'Time)
@@ -514,6 +567,15 @@ data Transformation
   | Set'Modifier'Enabled Game'ID Bool
   | Set'Modifier'Remaining'Uses Game'ID (Maybe Int)
   | Delete'Modifier Game'ID
+  | Add'Trigger
+      Object'Ref
+      (Ability Triggered)
+      (Maybe Game'ID)
+      (Maybe Game'Time)
+      (Maybe Int)
+  | Set'Trigger'Enabled Game'ID Bool
+  | Set'Trigger'Remaining'Uses Game'ID (Maybe Int)
+  | Delete'Trigger Game'ID
   | Set'Dust'Seal (Maybe Game'ID)
   | Set'Dust'Fall Int
   | Set'Time Game'Time
@@ -521,7 +583,82 @@ data Transformation
   deriving (Show, Eq, Generic)
 
 type ActionM = Free ActionD
-type Action = ActionM ()
+
+type InterpreterM = FreeT ActionD (Writer [Transformation])
+
+type Action = InterpreterM ()
+
+liftActionM :: ActionM a -> InterpreterM a
+liftActionM = \case
+  Pure value -> pure value
+  Free action -> join $ FreeT.liftF (fmap liftActionM action)
+
+transform :: Transformation -> Action
+transform transformation =
+  lift $ tell [transformation]
+
+get'Game :: InterpreterM Game
+get'Game =
+  FreeT.liftF $ Get'Game id
+
+get'Object :: Game'ID -> InterpreterM (Maybe Game'Object)
+get'Object objectID =
+  FreeT.liftF $ Get'Object objectID id
+
+fresh'ID :: InterpreterM Game'ID
+fresh'ID =
+  FreeT.liftF $ Fresh'ID id
+
+roll :: Int -> InterpreterM [Dice]
+roll amount =
+  FreeT.liftF $ Roll amount id
+
+create'Die :: Dice -> InterpreterM Game'ID
+create'Die face =
+  FreeT.liftF $ Create'Die'Object face id
+
+deal'Damage
+  :: Int
+  -> Damage'Type
+  -> Maybe Game'ID
+  -> Game'ID
+  -> Action
+deal'Damage amount damageType source target =
+  FreeT.liftF $
+    Deal'Damage amount damageType source target ()
+
+heal
+  :: Int
+  -> Maybe Game'ID
+  -> Game'ID
+  -> Action
+heal amount source target =
+  FreeT.liftF $
+    Heal amount source target ()
+
+create'Modifier
+  :: Modifier
+  -> Maybe Game'ID
+  -> Maybe Game'Time
+  -> Maybe Int
+  -> InterpreterM Game'ID
+create'Modifier modifier source expiresAt remainingUses =
+  FreeT.liftF $
+    Create'Modifier modifier source expiresAt remainingUses id
+
+create'Trigger
+  :: Ability Triggered
+  -> Maybe Game'ID
+  -> Maybe Game'Time
+  -> Maybe Int
+  -> InterpreterM Game'ID
+create'Trigger trigger source expiresAt remainingUses =
+  FreeT.liftF $
+    Create'Trigger trigger source expiresAt remainingUses id
+
+request'Movement :: Movement'Options -> InterpreterM Movement
+request'Movement options =
+  FreeT.liftF $ Request'Movement options id
 
 -- Game
 
@@ -583,12 +720,3 @@ data Game = Game
   , history :: History
   }
   deriving Generic
-
--- gen free monads
-$(makeFree ''ActionD)
-
-instance Semigroup Action where
-  (<>) = (>>)
-
-instance Monoid (ActionM ()) where
-  mempty = Pure ()

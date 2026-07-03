@@ -1,9 +1,5 @@
 module DustUp.LiteralWords where
 
-import Data.Bitmask
-import Data.Char (toLower)
-import Language.Haskell.TH
-
 data With = With
 data Certain = Certain
 data By = By

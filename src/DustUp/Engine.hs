@@ -1,8 +1,13 @@
 module DustUp.Engine where
 
-import Control.Monad.Free (Free (..))
-import Control.Monad (when)
-import Data.Foldable (traverse_)
+import Control.Monad (ap, unless, void, when, (>=>))
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.Free (FreeF (..))
+import Control.Monad.Trans.Free qualified as FreeT
+import Control.Monad.Trans.State.Strict (StateT)
+import Control.Monad.Trans.State.Strict qualified as State
+import Control.Monad.Writer.Strict (runWriter)
+import Data.Foldable (maximum, traverse_)
 import Data.List (find, nub, sort)
 import Data.Text qualified as Text
 import DustUp.Type
@@ -39,104 +44,103 @@ data Engine'Result
 
 data Engine'State = Engine'State
   { game :: Game
-  , action'log :: [(Action'Record, [Transformation])]
   , trigger'depth :: Int
+  , next'local'id :: Object'Ref
+  , object'refs :: [(Object'Ref, Game'ID)]
   }
 
 data Engine'Step a
-  = Step'Completed a Engine'State
+  = Step'Completed a
   | Step'Failed Engine'Error
   | Step'Awaiting Movement'Options (Movement -> Engine'Step a)
+  deriving Functor
 
-newtype EngineM a = EngineM
-  { runEngineM :: Engine'State -> Engine'Step a
-  }
+type EngineM = StateT Engine'State Engine'Step
 
-instance Functor EngineM where
-  fmap f action = action >>= pure . f
+instance Applicative Engine'Step where
+  pure = Step'Completed
+  (<*>) = ap
 
-instance Applicative EngineM where
-  pure value =
-    EngineM $ \state -> Step'Completed value state
-  (<*>) = apEngine
-
-instance Monad EngineM where
-  EngineM action >>= continue =
-    EngineM $ \state -> bindStep (action state) continue
-
-apEngine :: EngineM (a -> b) -> EngineM a -> EngineM b
-apEngine function argument = do
-  f <- function
-  value <- argument
-  pure $ f value
-
-bindStep :: Engine'Step a -> (a -> EngineM b) -> Engine'Step b
-bindStep step continue =
-  case step of
-    Step'Completed value state ->
-      runEngineM (continue value) state
-    Step'Failed err ->
-      Step'Failed err
-    Step'Awaiting options resume ->
-      Step'Awaiting options $ \movement ->
-        bindStep (resume movement) continue
+instance Monad Engine'Step where
+  Step'Completed value >>= continue =
+    continue value
+  Step'Failed err >>= _ =
+    Step'Failed err
+  Step'Awaiting options resume >>= continue =
+    Step'Awaiting options (resume >=> continue)
 
 throwEngineError :: Engine'Error -> EngineM a
-throwEngineError err =
-  EngineM $ const $ Step'Failed err
+throwEngineError =
+  lift . Step'Failed
 
--- The handler restarts from the state at which the protected computation
--- began, including after a suspended computation is resumed.
 catchEngineError
   :: EngineM a
   -> (Engine'Error -> EngineM a)
   -> EngineM a
-catchEngineError (EngineM action) handler =
-  EngineM $ \initialState ->
-    recover initialState (action initialState)
+catchEngineError action handler =
+  State.StateT $ \initialState ->
+    recover initialState $ State.runStateT action initialState
  where
   recover initialState = \case
-    Step'Completed value state ->
-      Step'Completed value state
+    Step'Completed result ->
+      Step'Completed result
     Step'Failed err ->
-      runEngineM (handler err) initialState
+      State.runStateT (handler err) initialState
     Step'Awaiting options resume ->
       Step'Awaiting options $ \movement ->
         recover initialState (resume movement)
 
 getEngineGame :: EngineM Game
 getEngineGame =
-  EngineM $ \state -> Step'Completed state.game state
+  (.game) <$> State.get
 
 putEngineGame :: Game -> EngineM ()
 putEngineGame game =
-  EngineM $ \(Engine'State _ actionLog triggerDepth) ->
-    Step'Completed () (Engine'State game actionLog triggerDepth)
+  State.modify $ \(Engine'State _ triggerDepth nextLocal refs) ->
+    Engine'State game triggerDepth nextLocal refs
 
 recordAction
   :: Action'Record
   -> [Transformation]
   -> EngineM ()
 recordAction action transformations =
-  EngineM $ \(Engine'State game actionLog triggerDepth) ->
-    Step'Completed
-      ()
-      ( Engine'State
-          game
-          (actionLog <> [(action, transformations)])
-          triggerDepth
-      )
+  State.modify $ \(Engine'State game triggerDepth nextLocal refs) ->
+    Engine'State
+      (recordHistoryAction action transformations game)
+      triggerDepth
+      nextLocal
+      refs
 
 getTriggerDepth :: EngineM Int
 getTriggerDepth =
-  EngineM $ \state -> Step'Completed state.trigger'depth state
+  (.trigger'depth) <$> State.get
+
+freshLocalID :: EngineM Object'Ref
+freshLocalID = do
+  state <- State.get
+  let objectID = state.next'local'id
+  State.put state{next'local'id = objectID - 1}
+  pure objectID
+
+bindObjectRef :: Object'Ref -> Game'ID -> EngineM ()
+bindObjectRef ref objectID =
+  State.modify $ \state ->
+    state{object'refs = (ref, objectID) : state.object'refs}
+
+resolveObjectRef :: Object'Ref -> EngineM Game'ID
+resolveObjectRef ref = do
+  if ref >= 0
+    then pure ref
+    else do
+      refs <- (.object'refs) <$> State.get
+      case lookup ref refs of
+        Just objectID -> pure objectID
+        Nothing -> throwEngineError $ Transformation'Failed $ Object'Not'Found ref
 
 modifyTriggerDepth :: (Int -> Int) -> EngineM ()
 modifyTriggerDepth modify =
-  EngineM $ \(Engine'State game actionLog triggerDepth) ->
-    Step'Completed
-      ()
-      (Engine'State game actionLog (modify triggerDepth))
+  State.modify $ \(Engine'State game triggerDepth nextLocal refs) ->
+    Engine'State game (modify triggerDepth) nextLocal refs
 
 withTriggerResolution :: EngineM a -> EngineM a
 withTriggerResolution action = do
@@ -152,9 +156,9 @@ runMovement
   -> Engine'Result
 runMovement interpretMovement movement initialGame =
   finishMovement movement initialGame $
-    runEngineM
+    State.runStateT
       (interpretMovement movement)
-      (Engine'State initialGame [] 0)
+      (Engine'State (beginHistoryEntry movement initialGame) 0 (-1) [])
 
 runActionMovement
   :: (Movement -> Either Engine'Error Action)
@@ -175,14 +179,14 @@ runGameMovement = runActionMovement compileMovement
 runSystemAction :: Action -> Game -> Engine'Result
 runSystemAction action initialGame =
   finishSystemAction initialGame $
-    runEngineM (interpretAction action) (Engine'State initialGame [] 0)
+    State.runStateT (interpretAction action) (Engine'State initialGame 0 (-1) [])
 
 finishSystemAction
   :: Game
-  -> Engine'Step ()
+  -> Engine'Step ((), Engine'State)
   -> Engine'Result
 finishSystemAction initialGame = \case
-  Step'Completed () (Engine'State finalGame _ _) ->
+  Step'Completed ((), Engine'State finalGame _ _ _) ->
     Engine'Completed finalGame
   Step'Failed err ->
     Engine'Failed err initialGame
@@ -215,9 +219,9 @@ compileMovement movement =
         , costs = costIDs
         } ->
           activateAction artifactID abilityID costIDs
-      Defend{} -> mempty
-      Select{} -> mempty
-      Choose'Option{} -> mempty
+      Defend{} -> pure ()
+      Select{} -> pure ()
+      Choose'Option{} -> pure ()
 
 initialSupplyAction :: [Game'ID] -> Action
 initialSupplyAction playerIDs = do
@@ -234,7 +238,7 @@ initialSupplyAction playerIDs = do
       playerIDs
   traverse_ initialRerollAction initialDice
   game <- get'Game
-  commit $ Set'Time game.time{phase = RerollPhase}
+  transform $ Set'Time game.time{phase = RerollPhase}
 
 supplyPhaseAction :: Game'ID -> Action
 supplyPhaseAction playerID = do
@@ -242,15 +246,16 @@ supplyPhaseAction playerID = do
   case playerSupplyData playerID game of
     Nothing -> pure ()
     Just supply -> do
-      let existing = playerAreaDieCount supply game
-          available = max 0 (supply.will - existing)
-          amount
-            | game.time.round == 0 = 0
-            | otherwise = min supply.speed available
+      let
+        existing = playerAreaDieCount supply game
+        available = max 0 (supply.will - existing)
+        amount
+          | game.time.round == 0 = 0
+          | otherwise = min supply.speed available
       createDistributedDice amount supply
       pure ()
   current <- get'Game
-  commit $ Set'Time current.time{phase = RerollPhase}
+  transform $ Set'Time current.time{phase = RerollPhase}
 
 data Player'Supply = Player'Supply
   { player :: Game'ID
@@ -273,22 +278,21 @@ playerSupplyData playerID game = do
   pure $
     Player'Supply
       playerID
-      columnOne.speed
-      columnOne.will
+      (modifiedPlayerSpeed playerID columnOne.speed game)
+      (modifiedPlayerWill playerID columnOne.will game)
       columnTwo.distribution
       areaIDs
 
 createDistributedDice
   :: Int
   -> Player'Supply
-  -> ActionM [Game'ID]
+  -> InterpreterM [Game'ID]
 createDistributedDice amount supply = do
   faces <- roll amount
   traverse
     ( \face -> do
-        dieID <- fresh'ID
-        commit $ Create'Die dieID face
-        commit $
+        dieID <- create'Die face
+        transform $
           Put'Die'In'Area
             dieID
             (areaForCategory (categoryForFace supply.distribution face) supply.areas)
@@ -322,10 +326,10 @@ rerollAndRedistribute playerID dieIDs = do
           Just supply -> do
             case containingObjects dieID game of
               areaID : _ ->
-                commit $ Remove'Die'From'Area dieID areaID
+                transform $ Remove'Die'From'Area dieID areaID
               [] -> pure ()
-            commit $ Set'Die'Face dieID face
-            commit $
+            transform $ Set'Die'Face dieID face
+            transform $
               Put'Die'In'Area
                 dieID
                 (areaForCategory (categoryForFace supply.distribution face) supply.areas)
@@ -372,12 +376,12 @@ passAction = do
   game <- get'Game
   case game.time.phase of
     DustUpPhase -> do
-      commit $ Set'Dust'Fall (min 10 $ game.dust'fall + 1)
-      commit $ Set'Time game.time{phase = MainPhase}
+      transform $ Set'Dust'Fall (min 10 $ game.dust'fall + 1)
+      transform $ Set'Time game.time{phase = MainPhase}
     EndPhase ->
       endPhaseAction game.time.player
     phase ->
-      commit $ Set'Time game.time{phase = nextPhase phase}
+      transform $ Set'Time game.time{phase = nextPhase phase}
 
 endPhaseAction :: Game'ID -> Action
 endPhaseAction playerID = do
@@ -385,8 +389,9 @@ endPhaseAction playerID = do
   case playerSupplyData playerID game of
     Nothing -> pure ()
     Just supply -> do
-      let areaDice = playerAreaDice supply game
-          excess = max 0 (length areaDice - supply.will)
+      let
+        areaDice = playerAreaDice supply game
+        excess = max 0 (length areaDice - supply.will)
       if excess == 0
         then pure ()
         else do
@@ -410,16 +415,16 @@ endPhaseAction playerID = do
             _ -> pure ()
   current <- get'Game
   traverse_
-    (\abilityID -> commit $ Set'Ability'Activated abilityID False)
+    (\abilityID -> transform $ Set'Ability'Activated abilityID False)
     (allAbilityIDs current)
   final <- get'Game
-  commit $ Set'Time (nextPlayerTime final)
+  transform $ Set'Time (nextPlayerTime final)
 
 rerollAction :: Game'ID -> [Game'ID] -> Action
 rerollAction playerID dieIDs = do
   rerollAndRedistribute playerID dieIDs
   game <- get'Game
-  commit $ Set'Time game.time{phase = DustUpPhase}
+  transform $ Set'Time game.time{phase = DustUpPhase}
 
 dustUpAction :: Game'ID -> DustUp'Cost -> Action
 dustUpAction artifactID cost = do
@@ -440,13 +445,14 @@ dustUpAction artifactID cost = do
             artifact.actived'side
           runChargedAbility $ artifact.charged (nextDustUpSide artifact)
       | Just artifact <- castObject @(Artifact Column'Three) object -> do
-          let nextCharge = artifact.charge + 1
-              completed = nextCharge >= artifact.prototype.capability
+          let
+            nextCharge = artifact.charge + 1
+            completed = nextCharge >= artifact.prototype.capability
           if completed
             then do
-              commit $ Set'Charge artifactID 0
-              commit $ Set'Artifact'Activated artifactID True
-            else commit $ Set'Charge artifactID nextCharge
+              transform $ Set'Charge artifactID 0
+              transform $ Set'Artifact'Activated artifactID True
+            else transform $ Set'Charge artifactID nextCharge
           runChargedAbility $
             artifact.charged
               (min artifact.prototype.capability nextCharge)
@@ -454,7 +460,7 @@ dustUpAction artifactID cost = do
       | otherwise -> pure ()
     Nothing -> pure ()
   current <- get'Game
-  commit $ Set'Time current.time{phase = MainPhase}
+  transform $ Set'Time current.time{phase = MainPhase}
 
 attackAction
   :: Game'ID
@@ -464,10 +470,17 @@ attackAction
 attackAction attackerID defenderID attackDieID = do
   game <- get'Game
   requestID <- fresh'ID
-  let defenceDice = diceInAreaCategory defenderID Defencing game
-      attackValue =
-        maybe 0 (fromInteger . repr . (.face)) $
-          lookupObject attackDieID game >>= castObject @Ability'Die
+  let
+    defenceDice =
+      modifiedDefenceDice
+        game
+        attackerID
+        defenderID
+        attackDieID
+        (diceInAreaCategory defenderID Defencing game)
+    attackValue =
+      maybe 0 (fromInteger . repr . (.face)) $
+        lookupObject attackDieID game >>= castObject @Ability'Die
   response <-
     request'Movement $
       Request'Defence
@@ -485,7 +498,15 @@ attackAction attackerID defenderID attackDieID = do
         (Just attackerID)
         defenderID
     Defend _ _ (Just defenceDieID) ->
-      consumeDie game defenceDieID
+      do
+        consumeDie game defenceDieID
+        transform $
+          Attack'Defended
+            attackerID
+            defenderID
+            attackDieID
+            defenceDieID
+            attackValue
     _ -> pure ()
 
 activateAction
@@ -496,11 +517,11 @@ activateAction
 activateAction artifactID abilityID costIDs = do
   game <- get'Game
   traverse_ (consumeDie game) costIDs
-  commit $ Set'Ability'Activated abilityID True
+  transform $ Set'Ability'Activated abilityID True
   case lookupObject artifactID game >>= castObject @(Artifact Column'Three) of
     Just artifact
       | artifact.ultimate == abilityID ->
-          commit $ Set'Ultimate'Activated artifactID True
+          transform $ Set'Ultimate'Activated artifactID True
     _ -> pure ()
   case lookupObject abilityID game >>= castObject @Ability'Prototype of
     Just (Ability'Object _ (Actived'Ability (Active _ runAbility)) _) ->
@@ -514,9 +535,9 @@ dustUpTwoSidedArtifact
   -> Action
 dustUpTwoSidedArtifact artifactID activated side
   | activated =
-      commit $ Set'Activated'Side artifactID (otherSide side)
+      transform $ Set'Activated'Side artifactID (otherSide side)
   | otherwise =
-      commit $ Set'Artifact'Activated artifactID True
+      transform $ Set'Artifact'Activated artifactID True
 
 class TwoSidedArtifact o where
   nextDustUpSide :: o -> Side
@@ -542,7 +563,7 @@ runChargedAbility abilityID = do
 payDustUpCost :: Game -> DustUp'Cost -> Action
 payDustUpCost game = \case
   Dust'Seal ->
-    commit $ Set'Dust'Seal Nothing
+    transform $ Set'Dust'Seal Nothing
   Thought'Die dieID ->
     consumeDie game dieID
 
@@ -553,12 +574,12 @@ consumeDie game dieID = do
       case lookupObject containerID game of
         Just object
           | Just _ <- castObject @Area object ->
-              commit $ Remove'Die'From'Area dieID containerID
+              transform $ Remove'Die'From'Area dieID containerID
           | otherwise ->
-              commit $ Remove'Die'From'Artifact dieID containerID
+              transform $ Remove'Die'From'Artifact dieID containerID
         Nothing -> pure ()
     [] -> pure ()
-  commit $ Delete'Die dieID
+  transform $ Delete'Die dieID
 
 diceInAreaCategory :: Game'ID -> Category -> Game -> [Game'ID]
 diceInAreaCategory playerID wanted game =
@@ -577,24 +598,26 @@ nextPhase phase
 
 nextPlayerTime :: Game -> Game'Time
 nextPlayerTime game =
-  let playerIDs =
-        sort
-          [ objectID
-          | (objectID, object) <- game.objects
-          , Just _ <- [castObject @Player object]
-          ]
-      laterPlayers = filter (> game.time.player) playerIDs
-      nextPlayer =
-        case laterPlayers of
+  let
+    playerIDs =
+      sort
+        [ objectID
+        | (objectID, object) <- game.objects
+        , Just _ <- [castObject @Player object]
+        ]
+    laterPlayers = filter (> game.time.player) playerIDs
+    nextPlayer =
+      case laterPlayers of
+        playerID : _ -> playerID
+        [] -> case playerIDs of
           playerID : _ -> playerID
-          [] -> case playerIDs of
-            playerID : _ -> playerID
-            [] -> game.time.player
-      nextRound =
-        if null laterPlayers
-          then game.time.round + 1
-          else game.time.round
-   in Game'Time nextRound nextPlayer SupplyPhase
+          [] -> game.time.player
+    nextRound =
+      if null laterPlayers
+        then game.time.round + 1
+        else game.time.round
+   in
+    Game'Time nextRound nextPlayer SupplyPhase
 
 otherSide :: Side -> Side
 otherSide Left'Side = Right'Side
@@ -603,11 +626,11 @@ otherSide Right'Side = Left'Side
 finishMovement
   :: Movement
   -> Game
-  -> Engine'Step ()
+  -> Engine'Step ((), Engine'State)
   -> Engine'Result
 finishMovement movement initialGame = \case
-  Step'Completed () (Engine'State finalGame actionLog _) ->
-    Engine'Completed $ recordHistory movement actionLog finalGame
+  Step'Completed ((), Engine'State finalGame _ _ _) ->
+    Engine'Completed finalGame
   Step'Failed err ->
     Engine'Failed err initialGame
   Step'Awaiting options resume ->
@@ -636,7 +659,8 @@ validateMovementAgainst game movement =
       speed <- playerSpeed playerID game
       if length dieIDs > speed
         then reject "the number of rerolled dice exceeds the player's speed"
-        else traverse_ (\dieID -> requireDieInOwnedArea playerID Nothing dieID game) dieIDs
+        else
+          traverse_ (\dieID -> requireDieInOwnedArea playerID Nothing dieID game) dieIDs
     DustUp playerID artifactID cost -> do
       requirePhase DustUpPhase game
       requireActivePlayer playerID game
@@ -688,7 +712,7 @@ requireActivePlayer playerID game = do
 
 requirePlayer :: Game'ID -> Game -> Either Engine'Error ()
 requirePlayer playerID game =
-  () <$ liftTransformation (requireObject @Player playerID game)
+  void $ liftTransformation (requireObject @Player playerID game)
 
 requireOwnedArtifact
   :: Game'ID
@@ -715,7 +739,7 @@ artifactOwner artifactID game =
       | Just (ColumnTwo _ owner _ _ _ _ _ _ _ _ _) <-
           castObject @(Artifact Column'Two) object ->
           Right owner
-      | Just (ColumnThree _ owner _ _ _ _ _ _ _ _ _ _ _ _) <-
+      | Just (ColumnThree _ owner _ _ _ _ _ _ _ _ _ _ _) <-
           castObject @(Artifact Column'Three) object ->
           Right owner
       | otherwise ->
@@ -729,7 +753,7 @@ playerSpeed playerID game = do
     liftTransformation $
       requireObject @(Artifact Column'One) columnOneID game
   let ColumnOne _ _ _ _ prototype _ _ _ _ _ _ = artifact
-  pure prototype.speed
+  pure $ modifiedPlayerSpeed playerID prototype.speed game
 
 requireDieInOwnedArea
   :: Game'ID
@@ -738,22 +762,20 @@ requireDieInOwnedArea
   -> Game
   -> Either Engine'Error ()
 requireDieInOwnedArea playerID expectedCategory dieID game = do
-  () <$ liftTransformation (requireObject @Ability'Die dieID game)
+  liftTransformation (requireObject @Ability'Die dieID game)
   player <- liftTransformation $ requireObject @Player playerID game
   let Player _ _ _ _ areaIDs = player
-  case
-    [ area
-    | (areaID, object) <- game.objects
-    , areaID `elem` tupleToList areaIDs
-    , Just area@(Area'Object _ _ owner dieIDs) <- [castObject @Area object]
-    , owner == playerID
-    , dieID `elem` dieIDs
-    ]
-    of
-      [] -> reject "die is not in one of the acting player's areas"
-      Area'Object _ prototype _ _ : _
-        | maybe True (== prototype.area'category) expectedCategory -> Right ()
-        | otherwise -> reject "die is in the wrong type of area"
+  case [ area
+       | (areaID, object) <- game.objects
+       , areaID `elem` tupleToList areaIDs
+       , Just area@(Area'Object _ _ owner dieIDs) <- [castObject @Area object]
+       , owner == playerID
+       , dieID `elem` dieIDs
+       ] of
+    [] -> reject "die is not in one of the acting player's areas"
+    Area'Object _ prototype _ _ : _
+      | maybe True (== prototype.area'category) expectedCategory -> Right ()
+      | otherwise -> reject "die is in the wrong type of area"
 
 requireControlledDie
   :: Game'ID
@@ -761,7 +783,7 @@ requireControlledDie
   -> Game
   -> Either Engine'Error ()
 requireControlledDie playerID dieID game = do
-  () <$ liftTransformation (requireObject @Ability'Die dieID game)
+  liftTransformation (requireObject @Ability'Die dieID game)
   owners <-
     traverse
       (`artifactOwner` game)
@@ -791,7 +813,7 @@ requireDustUpTargetAvailable
   -> Either Engine'Error ()
 requireDustUpTargetAvailable artifactID game =
   case lookupObject artifactID game >>= castObject @(Artifact Column'Three) of
-    Just (ColumnThree _ _ activated prototype _ charge _ _ _ _ _ _ _ _)
+    Just (ColumnThree _ _ activated prototype _ charge _ _ _ _ _ _ _)
       | activated || charge >= prototype.capability ->
           reject "an activated or fully charged column-three artifact cannot dust up"
     _ -> Right ()
@@ -845,7 +867,7 @@ artifactAbilities artifactID game =
           if activated
             then Right (actived side, Nothing)
             else reject "artifact is not activated"
-      | Just (ColumnThree _ _ activated _ side charge _ actived _ _ ultimate used _ _) <-
+      | Just (ColumnThree _ _ activated _ side charge _ actived _ _ ultimate used _) <-
           castObject @(Artifact Column'Three) object ->
           if activated
             then
@@ -887,86 +909,105 @@ transformationError = Left . Transformation'Failed
 reject :: String -> Either Engine'Error a
 reject = Left . Movement'Rejected
 
-interpretAction :: Action -> EngineM ()
-interpretAction = \case
-  Pure () -> pure ()
-  Free action ->
-    case action of
-      Get'Game continue -> do
-        game <- getEngineGame
-        recordAction (withoutContinuation action) []
-        interpretAction $ continue game
-      Get'Object objectID continue -> do
-        game <- getEngineGame
-        recordAction (withoutContinuation action) []
-        interpretAction $ continue (lookupObject objectID game)
-      Fresh'ID continue -> do
-        game <- getEngineGame
-        let objectID = game.next'object'id
-        putEngineGame $ setGameNextObjectID (objectID + 1) game
-        recordAction (withoutContinuation action) []
-        interpretAction $ continue objectID
-      Roll amount continue
-        | amount < 0 ->
-            throwEngineError $ Invalid'Roll'Count amount
-        | otherwise -> do
-            game <- getEngineGame
-            let (faces, generator) =
-                  rollDice amount game.random'generator
-            putEngineGame $ setGameRandomGenerator generator game
-            recordAction (withoutContinuation action) []
-            interpretAction $ continue faces
-      Deal'Damage amount damageType source target continue
-        | amount < 0 ->
-            throwEngineError $ Invalid'Damage'Amount amount
-        | otherwise -> do
-            let transformation =
-                  Change'Life
-                    target
-                    (-amount)
-                    (Damage'Received damageType source)
-            applyActionTransformation
-              (withoutContinuation action)
-              transformation
-            interpretAction continue
-      Heal amount source target continue
-        | amount < 0 ->
-            throwEngineError $ Invalid'Healing'Amount amount
-        | otherwise -> do
-            let transformation =
-                  Change'Life
-                    target
-                    amount
-                    (Healing'Received source)
-            applyActionTransformation
-              (withoutContinuation action)
-              transformation
-            interpretAction continue
-      Create'Modifier modifier source expiresAt remainingUses continue -> do
-        game <- getEngineGame
-        let modifierID = game.next'object'id
-        putEngineGame $ setGameNextObjectID (modifierID + 1) game
-        applyActionTransformation
-          (withoutContinuation action)
-          (Add'Modifier modifierID modifier source expiresAt remainingUses)
-        interpretAction $ continue modifierID
-      Request'Movement options continue ->
-        EngineM $ \state ->
-          Step'Awaiting options $ \response ->
-            case validateMovementResponse options response of
-              Left err -> Step'Failed err
-              Right () ->
-                runEngineM
-                  ( do
-                      recordAction (withoutContinuation action) []
-                      interpretAction $ continue response
-                  )
-                  state
-      Commit transformation continue -> do
-        applyActionTransformation
-          (withoutContinuation action)
-          transformation
-        interpretAction continue
+interpretAction
+  :: Action
+  -> EngineM ()
+interpretAction interpreter = do
+  let (step, pending) = runWriter $ FreeT.runFreeT interpreter
+  case step of
+    Pure () ->
+      applyActionTransformations Action'Completed'Record pending
+    Free action -> do
+      applyActionTransformations (withoutContinuation action) pending
+      case action of
+        Get'Game continue -> do
+          game <- getEngineGame
+          recordAction (withoutContinuation action) []
+          interpretAction $ continue game
+        Get'Object objectID continue -> do
+          game <- getEngineGame
+          recordAction (withoutContinuation action) []
+          interpretAction $ continue (lookupObject objectID game)
+        Fresh'ID continue -> do
+          objectID <- freshLocalID
+          recordAction (withoutContinuation action) []
+          interpretAction $ continue objectID
+        Roll amount continue
+          | amount < 0 ->
+              throwEngineError $ Invalid'Roll'Count amount
+          | otherwise -> do
+              game <- getEngineGame
+              let (faces, generator) =
+                    rollDice amount game.random'generator
+              putEngineGame $ setGameRandomGenerator generator game
+              recordAction (withoutContinuation action) []
+              interpretAction $ continue faces
+        Create'Die'Object face continue -> do
+          game <- getEngineGame
+          let dieID = game.next'object'id
+          applyActionTransformation
+            (withoutContinuation action)
+            (Create'Die dieID face)
+          interpretAction $ continue dieID
+        Deal'Damage amount damageType source target continue
+          | amount < 0 ->
+              throwEngineError $ Invalid'Damage'Amount amount
+          | otherwise -> do
+              let transformation =
+                    Change'Life
+                      target
+                      (-amount)
+                      (Damage'Received damageType source)
+              applyActionTransformation
+                (withoutContinuation action)
+                transformation
+              interpretAction continue
+        Heal amount source target continue
+          | amount < 0 ->
+              throwEngineError $ Invalid'Healing'Amount amount
+          | otherwise -> do
+              let transformation =
+                    Change'Life
+                      target
+                      amount
+                      (Healing'Received source)
+              applyActionTransformation
+                (withoutContinuation action)
+                transformation
+              interpretAction continue
+        Create'Modifier modifier source expiresAt remainingUses continue -> do
+          modifierID <- freshLocalID
+          applyActionTransformation
+            (withoutContinuation action)
+            (Add'Modifier modifierID modifier source expiresAt remainingUses)
+          resolvedID <- resolveObjectRef modifierID
+          interpretAction $ continue resolvedID
+        Create'Trigger trigger source expiresAt remainingUses continue -> do
+          triggerID <- freshLocalID
+          applyActionTransformation
+            (withoutContinuation action)
+            (Add'Trigger triggerID trigger source expiresAt remainingUses)
+          resolvedID <- resolveObjectRef triggerID
+          interpretAction $ continue resolvedID
+        Request'Movement options continue ->
+          State.StateT $ \state ->
+            Step'Awaiting options $ \response ->
+              case validateMovementResponse options response of
+                Left err -> Step'Failed err
+                Right () ->
+                  State.runStateT
+                    ( do
+                        recordAction (withoutContinuation action) []
+                        interpretAction $ continue response
+                    )
+                    state
+
+applyActionTransformations
+  :: Action'Record
+  -> [Transformation]
+  -> EngineM ()
+applyActionTransformations action =
+  traverse_ $ applyActionTransformation action
 
 applyActionTransformation
   :: Action'Record
@@ -974,23 +1015,126 @@ applyActionTransformation
   -> EngineM ()
 applyActionTransformation action transformation = do
   gameBefore <- getEngineGame
+  resolved <- resolveTransformationRefs transformation
   let (modified, consumedModifiers) =
-        applyActiveModifiers gameBefore action transformation
+        applyActiveModifiers gameBefore action resolved
   case applyTransformation modified gameBefore of
     Left err ->
       throwEngineError $ Transformation'Failed err
     Right transformed -> do
+      bindCreatedObjectRef modified gameBefore transformed
+      let recorded = recordedTransformation modified gameBefore
       let (afterUses, useTransformations) =
             consumeModifierUses consumedModifiers transformed
       putEngineGame afterUses
-      recordAction action (modified : useTransformations)
+      recordAction action (recorded : useTransformations)
       let triggeredActions =
-            activeTriggeredActions afterUses action modified
-      when (not $ null triggeredActions) $
+            activeTriggeredActions afterUses action recorded
+      unless (null triggeredActions) $
         withTriggerResolution $
           traverse_ interpretAction triggeredActions
       checkVictoryAtTriggerBoundary
       cleanupModifiersAtTriggerBoundary
+
+bindCreatedObjectRef :: Transformation -> Game -> Game -> EngineM ()
+bindCreatedObjectRef transformation before _ =
+  case transformation of
+    Create'Die ref _ ->
+      bindObjectRef ref before.next'object'id
+    Add'Modifier ref _ _ _ _ ->
+      bindObjectRef ref before.next'object'id
+    Add'Trigger ref _ _ _ _ ->
+      bindObjectRef ref before.next'object'id
+    _ ->
+      pure ()
+
+recordedTransformation :: Transformation -> Game -> Transformation
+recordedTransformation transformation before =
+  case transformation of
+    Create'Die _ face ->
+      Create'Die before.next'object'id face
+    Add'Modifier _ modifier source expiresAt remainingUses ->
+      Add'Modifier before.next'object'id modifier source expiresAt remainingUses
+    Add'Trigger _ trigger source expiresAt remainingUses ->
+      Add'Trigger before.next'object'id trigger source expiresAt remainingUses
+    _ ->
+      transformation
+
+resolveTransformationRefs :: Transformation -> EngineM Transformation
+resolveTransformationRefs = \case
+  Delete'Die dieID ->
+    Delete'Die <$> resolveObjectRef dieID
+  Set'Die'Face dieID face ->
+    (`Set'Die'Face` face) <$> resolveObjectRef dieID
+  Put'Die'In'Area dieID areaID ->
+    Put'Die'In'Area
+      <$> resolveObjectRef dieID
+      <*> resolveObjectRef areaID
+  Remove'Die'From'Area dieID areaID ->
+    Remove'Die'From'Area
+      <$> resolveObjectRef dieID
+      <*> resolveObjectRef areaID
+  Put'Die'On'Artifact dieID artifactID ->
+    Put'Die'On'Artifact
+      <$> resolveObjectRef dieID
+      <*> resolveObjectRef artifactID
+  Remove'Die'From'Artifact dieID artifactID ->
+    Remove'Die'From'Artifact
+      <$> resolveObjectRef dieID
+      <*> resolveObjectRef artifactID
+  transformation@Create'Die{} ->
+    pure transformation
+  Attack'Defended attackerID defenderID attackDieID defenceDieID amount ->
+    Attack'Defended
+      <$> resolveObjectRef attackerID
+      <*> resolveObjectRef defenderID
+      <*> resolveObjectRef attackDieID
+      <*> resolveObjectRef defenceDieID
+      <*> pure amount
+  Change'Life playerID amount reason ->
+    (\resolved -> Change'Life resolved amount reason) <$> resolveObjectRef playerID
+  Set'Artifact'Activated artifactID value ->
+    (`Set'Artifact'Activated` value) <$> resolveObjectRef artifactID
+  Set'Activated'Side artifactID side ->
+    (`Set'Activated'Side` side) <$> resolveObjectRef artifactID
+  Set'Charge artifactID level ->
+    (`Set'Charge` level) <$> resolveObjectRef artifactID
+  Set'Counter artifactID value ->
+    (`Set'Counter` value) <$> resolveObjectRef artifactID
+  Set'Ability'Activated abilityID value ->
+    (`Set'Ability'Activated` value) <$> resolveObjectRef abilityID
+  Set'Ultimate'Activated artifactID value ->
+    (`Set'Ultimate'Activated` value) <$> resolveObjectRef artifactID
+  Add'Modifier modifierRef modifier source expiresAt remainingUses ->
+    Add'Modifier modifierRef modifier
+      <$> traverse resolveObjectRef source
+      <*> pure expiresAt
+      <*> pure remainingUses
+  Set'Modifier'Enabled modifierID value ->
+    (`Set'Modifier'Enabled` value) <$> resolveObjectRef modifierID
+  Set'Modifier'Remaining'Uses modifierID uses ->
+    (`Set'Modifier'Remaining'Uses` uses) <$> resolveObjectRef modifierID
+  Delete'Modifier modifierID ->
+    Delete'Modifier <$> resolveObjectRef modifierID
+  Add'Trigger triggerRef trigger source expiresAt remainingUses ->
+    Add'Trigger triggerRef trigger
+      <$> traverse resolveObjectRef source
+      <*> pure expiresAt
+      <*> pure remainingUses
+  Set'Trigger'Enabled triggerID value ->
+    (`Set'Trigger'Enabled` value) <$> resolveObjectRef triggerID
+  Set'Trigger'Remaining'Uses triggerID uses ->
+    (`Set'Trigger'Remaining'Uses` uses) <$> resolveObjectRef triggerID
+  Delete'Trigger triggerID ->
+    Delete'Trigger <$> resolveObjectRef triggerID
+  Set'Dust'Seal holder ->
+    Set'Dust'Seal <$> traverse resolveObjectRef holder
+  transformation@Set'Dust'Fall{} ->
+    pure transformation
+  transformation@Set'Time{} ->
+    pure transformation
+  Finish'Game winnerIDs ->
+    Finish'Game <$> traverse resolveObjectRef winnerIDs
 
 checkVictoryAtTriggerBoundary :: EngineM ()
 checkVictoryAtTriggerBoundary = do
@@ -1005,29 +1149,51 @@ cleanupModifiersAtTriggerBoundary = do
 cleanupExpiredModifiers :: EngineM ()
 cleanupExpiredModifiers = do
   game <- getEngineGame
-  let expiredIDs =
+  let expiredModifierIDs =
         [ modifierID
         | (modifierID, object) <- game.objects
         , Just modifier <- [castObject @Modifier object]
         , not $ modifierIsActive game modifier
         ]
+      expiredTriggerIDs =
+        [ triggerID
+        | (triggerID, object) <- game.objects
+        , Just trigger <- [castObject @Temporary'Trigger object]
+        , not $ temporaryTriggerIsActive game trigger
+        ]
   let cleaned =
         foldl
-          (\current modifierID ->
-            case applyTransformation (Delete'Modifier modifierID) current of
-              Right next -> next
-              Left _ -> current
+          ( \current modifierID ->
+              case applyTransformation (Delete'Modifier modifierID) current of
+                Right next -> next
+                Left _ -> current
           )
           game
-          expiredIDs
-  putEngineGame cleaned
+          expiredModifierIDs
+      cleanedTriggers =
+        foldl
+          ( \current triggerID ->
+              case applyTransformation (Delete'Trigger triggerID) current of
+                Right next -> next
+                Left _ -> current
+          )
+          cleaned
+          expiredTriggerIDs
+  putEngineGame cleanedTriggers
   traverse_
-    (\modifierID ->
-      recordAction
-        (Commit'Record $ Delete'Modifier modifierID)
-        [Delete'Modifier modifierID]
+    ( \modifierID ->
+        recordAction
+          Action'Completed'Record
+          [Delete'Modifier modifierID]
     )
-    expiredIDs
+    expiredModifierIDs
+  traverse_
+    ( \triggerID ->
+        recordAction
+          Action'Completed'Record
+          [Delete'Trigger triggerID]
+    )
+    expiredTriggerIDs
 
 checkVictory :: EngineM ()
 checkVictory = do
@@ -1039,7 +1205,7 @@ checkVictory = do
         [] -> pure ()
         winnerIDs ->
           applyActionTransformation
-            (Commit'Record $ Finish'Game winnerIDs)
+            Action'Completed'Record
             (Finish'Game winnerIDs)
 
 determineWinners :: Game -> [Game'ID]
@@ -1062,15 +1228,17 @@ highestLifePlayers
   -> [Game'ID]
 highestLifePlayers _ [] = []
 highestLifePlayers activePlayer players =
-  let highestLife = foldr1 max $ map snd players
-      tied =
-        [ playerID
-        | (playerID, life) <- players
-        , life == highestLife
-        ]
-   in if activePlayer `elem` tied
-        then [activePlayer]
-        else tied
+  let
+    highestLife = Data.Foldable.maximum $ map snd players
+    tied =
+      [ playerID
+      | (playerID, life) <- players
+      , life == highestLife
+      ]
+   in
+    if activePlayer `elem` tied
+      then [activePlayer]
+      else tied
 
 data Active'Modifier = Active'Modifier
   { object'id :: Maybe Game'ID
@@ -1083,20 +1251,66 @@ data Active'Modifier = Active'Modifier
 
 activeModifiers :: Game -> [Active'Modifier]
 activeModifiers game =
+  [ Active'Modifier source apply
+  | (source, modifier) <- activeModifierPrototypes game
+  , let apply = applyModifier modifier
+  ]
+
+activeModifierPrototypes :: Game -> [(Maybe Game'ID, Modifier)]
+activeModifierPrototypes game =
   staticModifiers <> temporaryModifiers
  where
   staticModifiers =
-    [ Active'Modifier Nothing (applyModifier modifier)
+    [ (Nothing, modifier)
     | abilityID <- activeStaticAbilityIDs game
     , Just (Ability'Object _ (Static'Ability (Static' modifier)) _) <-
         [lookupObject abilityID game >>= castObject @Ability'Prototype]
     ]
   temporaryModifiers =
-    [ Active'Modifier (Just modifierID) (applyModifier modifier.prototype)
+    [ (Just modifierID, modifier.prototype)
     | (modifierID, object) <- game.objects
     , Just modifier <- [castObject @Modifier object]
     , modifierIsActive game modifier
     ]
+
+modifiedPlayerSpeed :: Game'ID -> Int -> Game -> Int
+modifiedPlayerSpeed playerID base game =
+  max 0 $
+    base
+      + sum
+        [ speed'bonus modifier game playerID
+        | (_, modifier) <- activeModifierPrototypes game
+        ]
+
+modifiedPlayerWill :: Game'ID -> Int -> Game -> Int
+modifiedPlayerWill playerID base game =
+  max 0 $
+    base
+      + sum
+        [ will'bonus modifier game playerID
+        | (_, modifier) <- activeModifierPrototypes game
+        ]
+
+modifiedDefenceDice
+  :: Game
+  -> Game'ID
+  -> Game'ID
+  -> Game'ID
+  -> [Game'ID]
+  -> [Game'ID]
+modifiedDefenceDice game attackerID defenderID attackDieID initialDice =
+  foldl
+    ( \dice (_, modifier) ->
+        defence'dice'modifier
+          modifier
+          game
+          attackerID
+          defenderID
+          attackDieID
+          dice
+    )
+    initialDice
+    (activeModifierPrototypes game)
 
 applyActiveModifiers
   :: Game
@@ -1107,12 +1321,14 @@ applyActiveModifiers game action transformation =
   foldl applyOne (transformation, []) $ activeModifiers game
  where
   applyOne (current, consumedIDs) modifier =
-    let (modified, consumed) = modifier.apply game action current
-        nextConsumed =
-          case (modifier.object'id, consumed) of
-            (Just modifierID, True) -> modifierID : consumedIDs
-            _ -> consumedIDs
-     in (modified, nextConsumed)
+    let
+      (modified, consumed) = modifier.apply game action current
+      nextConsumed =
+        case (modifier.object'id, consumed) of
+          (Just modifierID, True) -> modifierID : consumedIDs
+          _ -> consumedIDs
+     in
+      (modified, nextConsumed)
 
 consumeModifierUses
   :: [Game'ID]
@@ -1148,12 +1364,38 @@ activeTriggeredActions
   -> Transformation
   -> [Action]
 activeTriggeredActions game action transformation =
-  [ triggeredAction
-  | abilityID <- activeTriggeredAbilityIDs game
-  , Just (Ability'Object _ (Triggered'Ability (Trigger trigger)) _) <-
-      [lookupObject abilityID game >>= castObject @Ability'Prototype]
-  , Just triggeredAction <- [trigger game action transformation]
-  ]
+  staticTriggeredActions <> temporaryTriggeredActions
+ where
+  staticTriggeredActions =
+    [ triggeredAction
+    | abilityID <- activeTriggeredAbilityIDs game
+    , Just (Ability'Object _ (Triggered'Ability (Trigger trigger)) _) <-
+        [lookupObject abilityID game >>= castObject @Ability'Prototype]
+    , Just triggeredAction <- [trigger game action transformation]
+    ]
+  temporaryTriggeredActions =
+    [ do
+        consumeTemporaryTriggerUse triggerID trigger.remaining'uses
+        triggeredAction
+    | (triggerID, object) <- game.objects
+    , Just trigger <- [castObject @Temporary'Trigger object]
+    , temporaryTriggerIsActive game trigger
+    , let Trigger runTrigger = trigger.ability
+    , Just triggeredAction <- [runTrigger game action transformation]
+    ]
+
+consumeTemporaryTriggerUse :: Game'ID -> Maybe Int -> Action
+consumeTemporaryTriggerUse _ Nothing =
+  pure ()
+consumeTemporaryTriggerUse triggerID (Just remaining) =
+  transform $
+    Set'Trigger'Remaining'Uses triggerID (Just $ max 0 (remaining - 1))
+
+temporaryTriggerIsActive :: Game -> Object Temporary'Trigger -> Bool
+temporaryTriggerIsActive game trigger =
+  trigger.enabled
+    && maybe True (game.time <) trigger.expires'at
+    && maybe True (> 0) trigger.remaining'uses
 
 activeStaticAbilityIDs :: Game -> [Game'ID]
 activeStaticAbilityIDs =
@@ -1218,7 +1460,7 @@ activeArtifactAbilities object
           (triggers side)
           (static side)
           (charged side)
-  | Just (ColumnThree _ _ True _ side charge triggers _ static charged _ _ _ _) <-
+  | Just (ColumnThree _ _ True _ side charge triggers _ static charged _ _ _) <-
       castObject @(Artifact Column'Three) object =
       Just $
         ActiveColumnThree
@@ -1235,7 +1477,9 @@ validateMovementResponse
   -> Either Engine'Error ()
 validateMovementResponse options response =
   case (options, response) of
-    (Request'Select requestID playerID allowed constraint _, Select responder responseID targets)
+    ( Request'Select requestID playerID allowed constraint _
+      , Select responder responseID targets
+      )
       | responder /= playerID ->
           invalidResponse "selection was submitted by the wrong player"
       | responseID /= requestID ->
@@ -1249,7 +1493,9 @@ validateMovementResponse options response =
       | any (`notElem` allowed) targets ->
           invalidResponse "selection contains an object that was not offered"
       | otherwise -> Right ()
-    (Request'Defence requestID playerID _ allowed _, Defend responder responseID defence)
+    ( Request'Defence requestID playerID _ allowed _
+      , Defend responder responseID defence
+      )
       | responder /= playerID ->
           invalidResponse "defence was submitted by the wrong player"
       | responseID /= requestID ->
@@ -1257,7 +1503,9 @@ validateMovementResponse options response =
       | maybe False (`notElem` allowed) defence ->
           invalidResponse "the defence die was not offered"
       | otherwise -> Right ()
-    (Request'Option requestID playerID options _, Choose'Option responder responseID option)
+    ( Request'Option requestID playerID options _
+      , Choose'Option responder responseID option
+      )
       | responder /= playerID ->
           invalidResponse "option was submitted by the wrong player"
       | responseID /= requestID ->
@@ -1274,9 +1522,11 @@ rollDice :: Int -> StdGen -> ([Dice], StdGen)
 rollDice amount generator
   | amount <= 0 = ([], generator)
   | otherwise =
-      let (face, nextGenerator) = randomR (1 :: Int, 6) generator
-          (rest, finalGenerator) = rollDice (amount - 1) nextGenerator
-       in (fromInteger (toInteger face) : rest, finalGenerator)
+      let
+        (face, nextGenerator) = randomR (1 :: Int, 6) generator
+        (rest, finalGenerator) = rollDice (amount - 1) nextGenerator
+       in
+        (fromInteger (toInteger face) : rest, finalGenerator)
 
 applyTransformation
   :: Transformation
@@ -1286,8 +1536,9 @@ applyTransformation transformation game =
   case transformation of
     Create'Die dieID face -> do
       ensureObjectMissing dieID game
-      pure
-        $ setGameObjects
+      pure $
+        setGameNextObjectID (max game.next'object'id $ dieID + 1) $
+          setGameObjects
           ( ( dieID
             , Object (Ability'Die'Object dieID Ability'Die face)
             )
@@ -1303,21 +1554,24 @@ applyTransformation transformation game =
             setGameObjects (filter ((/= dieID) . fst) game.objects) game
         else Left $ Die'Still'Contained dieID containers
     Set'Die'Face dieID face ->
-      modifyObject @Ability'Die dieID
+      modifyObject @Ability'Die
+        dieID
         ( \(Ability'Die'Object storedID prototype _) ->
             Right $ Ability'Die'Object storedID prototype face
         )
         game
     Put'Die'In'Area dieID areaID -> do
       requireUncontainedDie dieID game
-      modifyObject @Area areaID
+      modifyObject @Area
+        areaID
         ( \(Area'Object storedID prototype owner dieIDs) ->
             Right $ Area'Object storedID prototype owner (dieID : dieIDs)
         )
         game
     Remove'Die'From'Area dieID areaID -> do
       requireObject @Ability'Die dieID game
-      modifyObject @Area areaID
+      modifyObject @Area
+        areaID
         ( \(Area'Object storedID prototype owner dieIDs) -> do
             remaining <- removeDieReference dieID areaID dieIDs
             Right $ Area'Object storedID prototype owner remaining
@@ -1329,8 +1583,13 @@ applyTransformation transformation game =
     Remove'Die'From'Artifact dieID artifactID -> do
       requireObject @Ability'Die dieID game
       modifyArtifact artifactID (Remove'Artifact'Die dieID) game
+    Attack'Defended attackerID defenderID _ _ _ -> do
+      requireObject @Player attackerID game
+      requireObject @Player defenderID game
+      pure game
     Change'Life playerID amount _ ->
-      modifyObject @Player playerID
+      modifyObject @Player
+        playerID
         ( \(Player storedID prototype currentLife artifacts areas) ->
             Right $
               Player
@@ -1346,12 +1605,26 @@ applyTransformation transformation game =
     Set'Activated'Side artifactID side ->
       modifyArtifact artifactID (Set'Artifact'Side side) game
     Set'Charge artifactID level ->
-      modifyObject @(Artifact Column'Three) artifactID
-        ( \(ColumnThree oid owner activated prototype side _ ts as ss cs ult used count ds) ->
+      modifyObject @(Artifact Column'Three)
+        artifactID
+        ( \(ColumnThree oid owner activated prototype side _ ts as ss cs ult used ds) ->
             if level >= 0 && level <= prototype.capability
               then
                 Right $
-                  ColumnThree oid owner activated prototype side level ts as ss cs ult used count ds
+                  ColumnThree
+                    oid
+                    owner
+                    activated
+                    prototype
+                    side
+                    level
+                    ts
+                    as
+                    ss
+                    cs
+                    ult
+                    used
+                    ds
               else Left $ Invalid'Charge artifactID level
         )
         game
@@ -1360,23 +1633,26 @@ applyTransformation transformation game =
       | otherwise ->
           modifyArtifact artifactID (Set'Artifact'Counter value) game
     Set'Ability'Activated abilityID value ->
-      modifyObject @Ability'Prototype abilityID
+      modifyObject @Ability'Prototype
+        abilityID
         ( \(Ability'Object storedID prototype _) ->
             Right $ Ability'Object storedID prototype value
         )
         game
     Set'Ultimate'Activated artifactID value ->
-      modifyObject @(Artifact Column'Three) artifactID
-        ( \(ColumnThree oid owner activated proto side charge ts as ss cs ult _ count ds) ->
+      modifyObject @(Artifact Column'Three)
+        artifactID
+        ( \(ColumnThree oid owner activated proto side charge ts as ss cs ult _ ds) ->
             Right $
-              ColumnThree oid owner activated proto side charge ts as ss cs ult value count ds
+              ColumnThree oid owner activated proto side charge ts as ss cs ult value ds
         )
         game
-    Add'Modifier modifierID modifier source expiresAt remainingUses -> do
-      ensureObjectMissing modifierID game
-      traverse_ (\sourceID -> requireObjectExists sourceID game) source
+    Add'Modifier _ modifier source expiresAt remainingUses -> do
+      let modifierID = game.next'object'id
+      traverse_ (`requireObjectExists` game) source
       pure $
-        setGameObjects
+        setGameNextObjectID (modifierID + 1) $
+          setGameObjects
           ( ( modifierID
             , Object $
                 Modifier'Object
@@ -1391,7 +1667,8 @@ applyTransformation transformation game =
           )
           game
     Set'Modifier'Enabled modifierID enabled ->
-      modifyObject @Modifier modifierID
+      modifyObject @Modifier
+        modifierID
         ( \(Modifier'Object oid prototype source expiresAt uses _) ->
             Right $
               Modifier'Object
@@ -1404,7 +1681,8 @@ applyTransformation transformation game =
         )
         game
     Set'Modifier'Remaining'Uses modifierID remainingUses ->
-      modifyObject @Modifier modifierID
+      modifyObject @Modifier
+        modifierID
         ( \(Modifier'Object oid prototype source expiresAt _ enabled) ->
             Right $
               Modifier'Object
@@ -1422,6 +1700,62 @@ applyTransformation transformation game =
         setGameObjects
           (filter ((/= modifierID) . fst) game.objects)
           game
+    Add'Trigger _ trigger source expiresAt remainingUses -> do
+      let triggerID = game.next'object'id
+      traverse_ (`requireObjectExists` game) source
+      pure $
+        setGameNextObjectID (triggerID + 1) $
+          setGameObjects
+          ( ( triggerID
+            , Object $
+                Temporary'Trigger'Object
+                  triggerID
+                  Temporary'Trigger
+                  trigger
+                  source
+                  expiresAt
+                  remainingUses
+                  True
+            )
+              : game.objects
+          )
+          game
+    Set'Trigger'Enabled triggerID enabled ->
+      modifyObject @Temporary'Trigger
+        triggerID
+        ( \(Temporary'Trigger'Object oid prototype ability source expiresAt uses _) ->
+            Right $
+              Temporary'Trigger'Object
+                oid
+                prototype
+                ability
+                source
+                expiresAt
+                uses
+                enabled
+        )
+        game
+    Set'Trigger'Remaining'Uses triggerID remainingUses ->
+      modifyObject @Temporary'Trigger
+        triggerID
+        ( \(Temporary'Trigger'Object oid prototype ability source expiresAt _ enabled) ->
+            Right $
+              Temporary'Trigger'Object
+                oid
+                prototype
+                ability
+                source
+                expiresAt
+                remainingUses
+                enabled
+        )
+        game
+    Delete'Trigger triggerID -> do
+      requireObject @Temporary'Trigger triggerID game
+      pure $
+        setGameObjects
+          (filter ((/= triggerID) . fst) game.objects)
+          game
     Set'Dust'Seal holder -> do
       traverse_ (\playerID -> requireObject @Player playerID game) holder
       pure $ setGameDustSeal holder game
@@ -1437,12 +1771,12 @@ applyTransformation transformation game =
           traverse_ (\playerID -> requireObject @Player playerID game) winnerIDs
           pure $ setGameWinners (Just winnerIDs) game
 
-recordHistory
+beginHistoryEntry
   :: Movement
-  -> [(Action'Record, [Transformation])]
   -> Game
   -> Game
-recordHistory movement actions
+beginHistoryEntry
+  movement
   (Game objects time nextID seal fall winners rng (History entries)) =
     Game
       objects
@@ -1452,7 +1786,33 @@ recordHistory movement actions
       fall
       winners
       rng
-      (History $ entries <> [History'Entry movement actions])
+      (History $ entries <> [History'Entry movement []])
+
+recordHistoryAction
+  :: Action'Record
+  -> [Transformation]
+  -> Game
+  -> Game
+recordHistoryAction
+  action
+  transformations
+  (Game objects time nextID seal fall winners rng (History entries)) =
+    Game
+      objects
+      time
+      nextID
+      seal
+      fall
+      winners
+      rng
+      (History $ appendAction entries)
+   where
+    appendAction [] =
+      []
+    appendAction [entry] =
+      [entry{actions = entry.actions <> [(action, transformations)]}]
+    appendAction (entry : rest) =
+      entry : appendAction rest
 
 lookupObject :: Game'ID -> Game -> Maybe Game'Object
 lookupObject objectID game = snd <$> find ((== objectID) . fst) game.objects
@@ -1464,8 +1824,9 @@ requireObject
   -> Game
   -> Either Transformation'Error (Object o)
 requireObject objectID game = do
-  object <- maybe (Left $ Object'Not'Found objectID) Right $
-    lookupObject objectID game
+  object <-
+    maybe (Left $ Object'Not'Found objectID) Right $
+      lookupObject objectID game
   maybe
     (Left $ Wrong'Object'Type objectID (category @o))
     Right
@@ -1517,15 +1878,25 @@ modifyColumnOne
   -> Either Transformation'Error (Object (Artifact Column'One))
 modifyColumnOne change artifact =
   case (change, artifact) of
-    (Set'Artifact'Activation activated, ColumnOne oid owner _ side proto ts as ss cs count ds) ->
+    ( Set'Artifact'Activation activated
+      , ColumnOne oid owner _ side proto ts as ss cs count ds
+      ) ->
       Right $ ColumnOne oid owner activated side proto ts as ss cs count ds
-    (Set'Artifact'Side side, ColumnOne oid owner activated _ proto ts as ss cs count ds) ->
+    ( Set'Artifact'Side side
+      , ColumnOne oid owner activated _ proto ts as ss cs count ds
+      ) ->
       Right $ ColumnOne oid owner activated side proto ts as ss cs count ds
-    (Set'Artifact'Counter count, ColumnOne oid owner activated side proto ts as ss cs _ ds) ->
+    ( Set'Artifact'Counter count
+      , ColumnOne oid owner activated side proto ts as ss cs _ ds
+      ) ->
       Right $ ColumnOne oid owner activated side proto ts as ss cs count ds
-    (Add'Artifact'Die dieID, ColumnOne oid owner activated side proto ts as ss cs count ds) ->
+    ( Add'Artifact'Die dieID
+      , ColumnOne oid owner activated side proto ts as ss cs count ds
+      ) ->
       Right $ ColumnOne oid owner activated side proto ts as ss cs count (dieID : ds)
-    (Remove'Artifact'Die dieID, ColumnOne oid owner activated side proto ts as ss cs count ds) -> do
+    ( Remove'Artifact'Die dieID
+      , ColumnOne oid owner activated side proto ts as ss cs count ds
+      ) -> do
       remaining <- removeDieReference dieID oid ds
       Right $ ColumnOne oid owner activated side proto ts as ss cs count remaining
 
@@ -1535,15 +1906,25 @@ modifyColumnTwo
   -> Either Transformation'Error (Object (Artifact Column'Two))
 modifyColumnTwo change artifact =
   case (change, artifact) of
-    (Set'Artifact'Activation activated, ColumnTwo oid owner _ proto side ts as ss cs count ds) ->
+    ( Set'Artifact'Activation activated
+      , ColumnTwo oid owner _ proto side ts as ss cs count ds
+      ) ->
       Right $ ColumnTwo oid owner activated proto side ts as ss cs count ds
-    (Set'Artifact'Side side, ColumnTwo oid owner activated proto _ ts as ss cs count ds) ->
+    ( Set'Artifact'Side side
+      , ColumnTwo oid owner activated proto _ ts as ss cs count ds
+      ) ->
       Right $ ColumnTwo oid owner activated proto side ts as ss cs count ds
-    (Set'Artifact'Counter count, ColumnTwo oid owner activated proto side ts as ss cs _ ds) ->
+    ( Set'Artifact'Counter count
+      , ColumnTwo oid owner activated proto side ts as ss cs _ ds
+      ) ->
       Right $ ColumnTwo oid owner activated proto side ts as ss cs count ds
-    (Add'Artifact'Die dieID, ColumnTwo oid owner activated proto side ts as ss cs count ds) ->
+    ( Add'Artifact'Die dieID
+      , ColumnTwo oid owner activated proto side ts as ss cs count ds
+      ) ->
       Right $ ColumnTwo oid owner activated proto side ts as ss cs count (dieID : ds)
-    (Remove'Artifact'Die dieID, ColumnTwo oid owner activated proto side ts as ss cs count ds) -> do
+    ( Remove'Artifact'Die dieID
+      , ColumnTwo oid owner activated proto side ts as ss cs count ds
+      ) -> do
       remaining <- removeDieReference dieID oid ds
       Right $ ColumnTwo oid owner activated proto side ts as ss cs count remaining
 
@@ -1553,17 +1934,58 @@ modifyColumnThree
   -> Either Transformation'Error (Object (Artifact Column'Three))
 modifyColumnThree change artifact =
   case (change, artifact) of
-    (Set'Artifact'Activation activated, ColumnThree oid owner _ proto side charge ts as ss cs ult used count ds) ->
-      Right $ ColumnThree oid owner activated proto side charge ts as ss cs ult used count ds
-    (Set'Artifact'Side side, ColumnThree oid owner activated proto _ charge ts as ss cs ult used count ds) ->
-      Right $ ColumnThree oid owner activated proto side charge ts as ss cs ult used count ds
-    (Set'Artifact'Counter count, ColumnThree oid owner activated proto side charge ts as ss cs ult used _ ds) ->
-      Right $ ColumnThree oid owner activated proto side charge ts as ss cs ult used count ds
-    (Add'Artifact'Die dieID, ColumnThree oid owner activated proto side charge ts as ss cs ult used count ds) ->
-      Right $ ColumnThree oid owner activated proto side charge ts as ss cs ult used count (dieID : ds)
-    (Remove'Artifact'Die dieID, ColumnThree oid owner activated proto side charge ts as ss cs ult used count ds) -> do
+    ( Set'Artifact'Activation activated
+      , ColumnThree oid owner _ proto side charge ts as ss cs ult used ds
+      ) ->
+      Right $
+        ColumnThree oid owner activated proto side charge ts as ss cs ult used ds
+    ( Set'Artifact'Side side
+      , ColumnThree oid owner activated proto _ charge ts as ss cs ult used ds
+      ) ->
+      Right $
+        ColumnThree oid owner activated proto side charge ts as ss cs ult used ds
+    ( Set'Artifact'Counter count
+      , ColumnThree oid owner activated proto side charge ts as ss cs ult used ds
+      ) ->
+      Right $
+        ColumnThree oid owner activated proto side charge ts as ss cs ult used ds
+    ( Add'Artifact'Die dieID
+      , ColumnThree oid owner activated proto side charge ts as ss cs ult used ds
+      ) ->
+      Right $
+        ColumnThree
+          oid
+          owner
+          activated
+          proto
+          side
+          charge
+          ts
+          as
+          ss
+          cs
+          ult
+          used
+          (dieID : ds)
+    ( Remove'Artifact'Die dieID
+      , ColumnThree oid owner activated proto side charge ts as ss cs ult used ds
+      ) -> do
       remaining <- removeDieReference dieID oid ds
-      Right $ ColumnThree oid owner activated proto side charge ts as ss cs ult used count remaining
+      Right $
+        ColumnThree
+          oid
+          owner
+          activated
+          proto
+          side
+          charge
+          ts
+          as
+          ss
+          cs
+          ult
+          used
+          remaining
 
 replaceObject :: Game'ID -> Game'Object -> Game -> Game
 replaceObject objectID replacement game =

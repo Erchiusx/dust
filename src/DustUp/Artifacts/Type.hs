@@ -35,7 +35,7 @@ data SomeArtifact'Definition where
     -> SomeArtifact'Definition
 
 noChargedAbility :: Ability Charged
-noChargedAbility = Charge $ const mempty
+noChargedAbility = Charge $ const $ pure ()
 
 lookupGameObject :: Game'ID -> Game -> Maybe Game'Object
 lookupGameObject objectID game =
@@ -120,14 +120,13 @@ playerAreaDice playerID category game =
 
 removeDieFromArea :: Game'ID -> Game'ID -> Action
 removeDieFromArea areaID dieID = do
-  commit $ Remove'Die'From'Area dieID areaID
-  commit $ Delete'Die dieID
+  transform $ Remove'Die'From'Area dieID areaID
+  transform $ Delete'Die dieID
 
 createDieInArea :: Game'ID -> Dice -> Action
 createDieInArea areaID face = do
-  dieID <- fresh'ID
-  commit $ Create'Die dieID face
-  commit $ Put'Die'In'Area dieID areaID
+  dieID <- create'Die face
+  transform $ Put'Die'In'Area dieID areaID
 
 attackDamageModifier
   :: Text
@@ -145,4 +144,60 @@ attackDamageModifier modifierName ownerID bonus =
             , amount < 0 ->
                 (Change'Life target (amount - bonus) reason, True)
           _ -> (transformation, False)
+    , speed'bonus = \_ _ -> 0
+    , will'bonus = \_ _ -> 0
+    , defence'dice'modifier = \_ _ _ _ dice -> dice
+    }
+
+statModifier
+  :: Text
+  -> Game'ID
+  -> Int
+  -> Int
+  -> Modifier
+statModifier modifierName ownerID speedBonus willBonus =
+  Modifier
+    { name = modifierName
+    , applyModifier = \_ _ transformation -> (transformation, False)
+    , speed'bonus = \_ playerID ->
+        if playerID == ownerID then speedBonus else 0
+    , will'bonus = \_ playerID ->
+        if playerID == ownerID then willBonus else 0
+    , defence'dice'modifier = \_ _ _ _ dice -> dice
+    }
+
+unblockableAttackModifier
+  :: Text
+  -> Game'ID
+  -> Modifier
+unblockableAttackModifier modifierName ownerID =
+  Modifier
+    { name = modifierName
+    , applyModifier = \_ _ transformation -> (transformation, False)
+    , speed'bonus = \_ _ -> 0
+    , will'bonus = \_ _ -> 0
+    , defence'dice'modifier = \_ attackerID _ _ dice ->
+        if attackerID == ownerID then [] else dice
+    }
+
+preserveDamagingAttackDieModifier
+  :: Text
+  -> Game'ID
+  -> Game'ID
+  -> Modifier
+preserveDamagingAttackDieModifier modifierName ownerID destinationAreaID =
+  Modifier
+    { name = modifierName
+    , applyModifier = \_ action transformation ->
+        case (action, transformation) of
+          ( Deal'Damage'Record _ Normal'Damage (Just source) target
+            , Delete'Die dieID
+            )
+              | source == ownerID
+              , target /= ownerID ->
+                  (Put'Die'In'Area dieID destinationAreaID, True)
+          _ -> (transformation, False)
+    , speed'bonus = \_ _ -> 0
+    , will'bonus = \_ _ -> 0
+    , defence'dice'modifier = \_ _ _ _ dice -> dice
     }

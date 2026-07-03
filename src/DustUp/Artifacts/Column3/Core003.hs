@@ -44,11 +44,12 @@ divineCut context =
     , run = \game _ ->
         case opponentsOf context.owner'id game of
           opponentID : _ -> do
-            let ownByCategory =
-                  [ (category, areaDice context category game)
-                  | category <- [Attacking, Defencing, Thoughtful]
-                  ]
-                ownDiscarded = sum $ map (length . snd) ownByCategory
+            let
+              ownByCategory =
+                [ (category, areaDice context category game)
+                | category <- [Attacking, Defencing, Thoughtful]
+                ]
+              ownDiscarded = sum $ map (length . snd) ownByCategory
             opponentDiscarded <-
               fmap sum $
                 traverse
@@ -78,10 +79,11 @@ discardMatchingOpponentDice
   -> Game'ID
   -> Game
   -> (Category, [Game'ID])
-  -> ActionM Int
+  -> InterpreterM Int
 discardMatchingOpponentDice context opponentID game (category, ownDice) = do
-  let opponentDice = playerAreaDice opponentID category game
-      discardCount = min (length ownDice) (length opponentDice)
+  let
+    opponentDice = playerAreaDice opponentID category game
+    discardCount = min (length ownDice) (length opponentDice)
   if discardCount == 0
     then pure 0
     else do

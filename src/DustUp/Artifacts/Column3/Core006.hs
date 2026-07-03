@@ -63,13 +63,14 @@ resolveUltimate context amount = do
   game <- get'Game
   case opponentsOf context.owner'id game of
     opponentID : _ -> do
-      let opponentAreas = playerAreas opponentID game
-          defenceArea = case opponentAreas of
-            Just (_, areaID, _) -> areaID
-            Nothing -> -1
-          defenceDice =
-            maybe [] (.dices) $ lookupArea defenceArea game
-          discardCount = min amount (length defenceDice)
+      let
+        opponentAreas = playerAreas opponentID game
+        defenceArea = case opponentAreas of
+          Just (_, areaID, _) -> areaID
+          Nothing -> -1
+        defenceDice =
+          maybe [] (.dices) $ lookupArea defenceArea game
+        discardCount = min amount (length defenceDice)
       selected <-
         if discardCount == 0
           then pure []

@@ -16,8 +16,7 @@ definition =
         [ Text.pack "战车：意志+1；回合开始时若有防御骰，获得1个5点攻击骰。"
         , Text.pack "王家之拳：消耗2个冥想骰，重整防御骰并获得攻击伤害加成。"
         ]
-    , unsupported'rules =
-        [Text.pack "派生意志修正尚未接入属性查询管线。"]
+    , unsupported'rules = []
     , build = buildArtifact
     }
 
@@ -40,7 +39,9 @@ buildArtifact context =
     , actived = \case
         Left'Side -> []
         Right'Side -> [royalFist context]
-    , static = const []
+    , static = \case
+        Left'Side -> [chariotWill context]
+        Right'Side -> []
     , charged = const noChargedAbility
     }
 
@@ -58,6 +59,15 @@ chariot context =
                 else createDieInArea (areaForCategory context Attacking) Five
       _ -> Nothing
 
+chariotWill :: Artifact'Context -> Ability Static
+chariotWill context =
+  Static' $
+    statModifier
+      (Text.pack "战车-意志")
+      context.owner'id
+      0
+      1
+
 royalFist :: Artifact'Context -> Ability Actived
 royalFist context =
   Active
@@ -70,9 +80,10 @@ royalFist context =
           else Left $ Text.pack "王家之拳必须消耗2个冥想骰。"
     , run = \_ _ -> do
         game <- get'Game
-        let defenceDice = take 2 $ areaDice context Defencing game
-            missing = 2 - length defenceDice
-            defenceArea = areaForCategory context Defencing
+        let
+          defenceDice = take 2 $ areaDice context Defencing game
+          missing = 2 - length defenceDice
+          defenceArea = areaForCategory context Defencing
         traverse_ (removeDieFromArea defenceArea) defenceDice
         if missing > 0
           then
@@ -85,10 +96,10 @@ royalFist context =
         faces <- roll 4
         traverse_ (createDieInArea defenceArea) faces
         create'Modifier
-          (attackDamageModifier
-            (Text.pack "王家之拳-攻击伤害")
-            context.owner'id
-            1
+          ( attackDamageModifier
+              (Text.pack "王家之拳-攻击伤害")
+              context.owner'id
+              1
           )
           (Just context.artifact'id)
           (Just $ endOfCurrentTurn game.time)

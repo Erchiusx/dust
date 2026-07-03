@@ -18,7 +18,7 @@ definition =
         , Text.pack "龙腾万丈：消耗3个冥想骰，获得4骰并重新分区。"
         ]
     , unsupported'rules =
-        [Text.pack "速度+1和额外重掷次数尚未接入派生属性与阶段状态。"]
+        [Text.pack "额外重掷次数尚未接入阶段状态。"]
     , build = buildArtifact
     }
 
@@ -39,7 +39,9 @@ buildArtifact context =
     , actived = \case
         Left'Side -> []
         Right'Side -> [soaringDragon context]
-    , static = const []
+    , static = \case
+        Left'Side -> [dragonFlow context]
+        Right'Side -> []
     , charged = const noChargedAbility
     }
 
@@ -58,23 +60,33 @@ soaringDragon context =
         case faces of
           [] -> pure ()
           _ -> do
-            let smallest = minimumBy (comparing repr) faces
-                withoutSmallest = delete smallest faces
-                largest = maximumBy (comparing repr) withoutSmallest
-                remaining = delete largest withoutSmallest
-                attackArea = areaForCategory context Attacking
-                defenceArea = areaForCategory context Defencing
+            let
+              smallest = minimumBy (comparing repr) faces
+              withoutSmallest = delete smallest faces
+              largest = maximumBy (comparing repr) withoutSmallest
+              remaining = delete largest withoutSmallest
+              attackArea = areaForCategory context Attacking
+              defenceArea = areaForCategory context Defencing
             createDieInArea attackArea smallest
             createDieInArea attackArea largest
             mapM_ (createDieInArea defenceArea) remaining
         create'Modifier
-          (attackDamageModifier
-            (Text.pack "龙腾万丈-攻击伤害")
-            context.owner'id
-            1
+          ( attackDamageModifier
+              (Text.pack "龙腾万丈-攻击伤害")
+              context.owner'id
+              1
           )
           (Just context.artifact'id)
           (Just $ endOfCurrentTurn game.time)
           Nothing
         pure ()
     }
+
+dragonFlow :: Artifact'Context -> Ability Static
+dragonFlow context =
+  Static' $
+    statModifier
+      (Text.pack "龙游万象")
+      context.owner'id
+      1
+      0

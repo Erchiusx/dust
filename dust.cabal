@@ -72,6 +72,7 @@ common dependencies
     , template-haskell  >=2.23.0   && <2.24
     , text              >=2.1.2    && <2.2
     , time              >=1.14     && <1.15
+    , transformers      >=0.6      && <0.7
     , wai               >=3.2      && <3.3
     , wai-app-static    >=3.1      && <3.2
     , wai-websockets    >=3.0      && <3.1
@@ -81,12 +82,13 @@ common dependencies
 common extensions
   default-extensions:
     AllowAmbiguousTypes
+    DeriveFunctor
     DerivingVia
     DuplicateRecordFields
     MonadComprehensions
     MultilineStrings
-    OverloadedStrings
     OverloadedRecordDot
+    OverloadedStrings
     TemplateHaskell
     TypeFamilies
 
